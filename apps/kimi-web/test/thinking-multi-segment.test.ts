@@ -123,6 +123,28 @@ describe('multi-segment thinking', () => {
       },
     });
   });
+
+  it('keeps live bash progress on the running tool call', () => {
+    const state = play([
+      ['turn.started', { turnId: 1 }],
+      ['turn.step.started', { turnId: 1 }],
+      ['tool.call.started', { turnId: 1, toolCallId: 't1', name: 'bash', args: { command: 'pnpm test' } }],
+      ['tool.progress', { toolCallId: 't1', update: { kind: 'stdout', text: 'running tests\n' } }],
+    ]);
+
+    const turns = messagesToTurns(state.messagesBySession[SESSION]!, []);
+    const block = turns[0]!.blocks!.find((b) => b.kind === 'tool');
+    expect(block).toMatchObject({
+      kind: 'tool',
+      tool: {
+        id: 't1',
+        name: 'bash',
+        status: 'running',
+        output: ['running tests\n'],
+        defaultExpanded: true,
+      },
+    });
+  });
 });
 
 describe('snapshot turn grouping', () => {

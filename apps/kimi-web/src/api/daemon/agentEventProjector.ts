@@ -354,10 +354,26 @@ function appendToolUse(
   toolCallId: string,
   toolName: string,
   input: unknown,
+  outputLines?: string[],
 ): void {
   const msg = state.messages.find((m) => m.id === messageId);
   if (!msg) return;
-  msg.content.push({ type: 'toolUse', toolCallId, toolName, input });
+  msg.content.push({ type: 'toolUse', toolCallId, toolName, input, outputLines });
+}
+
+function toolProgressOutput(payload: Record<string, unknown>): { outputChunk: string; stream: 'stdout' | 'stderr' } | null {
+  const update = payload['update'];
+  const updateRecord = update && typeof update === 'object' ? update as Record<string, unknown> : null;
+  const streamRaw = updateRecord?.['stream'] ?? updateRecord?.['kind'] ?? payload['stream'];
+  const stream = streamRaw === 'stderr' ? 'stderr' : 'stdout';
+  const chunk =
+    (typeof updateRecord?.['text'] === 'string' && updateRecord['text']) ||
+    (typeof updateRecord?.['message'] === 'string' && updateRecord['message']) ||
+    (typeof payload['chunk'] === 'string' && payload['chunk']) ||
+    (typeof payload['output'] === 'string' && payload['output']) ||
+    (typeof payload['message'] === 'string' && payload['message']) ||
+    '';
+  return chunk.length > 0 ? { outputChunk: chunk, stream } : null;
 }
 
 function finishAssistantMessage(state: SessionState, messageId: string): void {
@@ -478,11 +494,16 @@ export function createAgentProjector(): AgentProjector {
       msg.content.push({ type: 'text', text: turn.assistantText });
     }
     for (const tool of turn.runningTools) {
+      const outputLines =
+        typeof tool.lastProgress?.text === 'string' && tool.lastProgress.text.length > 0
+          ? [tool.lastProgress.text]
+          : undefined;
       msg.content.push({
         type: 'toolUse',
         toolCallId: tool.toolCallId,
         toolName: tool.name,
         input: tool.args ?? {},
+        outputLines,
       });
       s.toolStartTimes.set(tool.toolCallId, Date.now());
     }
@@ -749,7 +770,17 @@ export function createAgentProjector(): AgentProjector {
 
       // -----------------------------------------------------------------------
       case 'tool.progress': {
-        // No-op — tool output streaming is not rendered at the AppEvent level
+        const toolCallId: string = p?.toolCallId;
+        const progress = toolProgressOutput(p ?? {});
+        if (toolCallId && progress) {
+          out.push({
+            type: 'toolOutput',
+            sessionId,
+            toolCallId,
+            outputChunk: progress.outputChunk,
+            stream: progress.stream,
+          });
+        }
         break;
       }
 

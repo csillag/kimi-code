@@ -140,7 +140,7 @@ export type AppMessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type AppMessageContent =
   | { type: 'text'; text: string }
-  | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown }
+  | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown; outputLines?: string[] }
   | { type: 'toolResult'; toolCallId: string; output: unknown; isError?: boolean }
   | { type: 'image'; source: ImageSource }
   | { type: 'file'; fileId: string; name: string; mediaType: string; size: number }
@@ -386,6 +386,7 @@ export type AppEvent =
   | { type: 'messageCreated'; message: AppMessage }
   | { type: 'messageUpdated'; sessionId: string; messageId: string; content: AppMessageContent[]; status: 'pending' | 'completed' | 'error' }
   | { type: 'assistantDelta'; sessionId: string; messageId: string; contentIndex: number; delta: { text?: string; thinking?: string } }
+  | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
   | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
   | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string }
   | { type: 'approvalExpired'; sessionId: string; approvalId: string }

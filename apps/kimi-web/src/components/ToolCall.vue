@@ -1,6 +1,6 @@
 <!-- apps/kimi-web/src/components/ToolCall.vue -->
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { ToolCall, ToolMedia } from '../types';
 import { toolLabel, toolGlyph, toolChip, toolSummary } from '../lib/toolMeta';
 
@@ -17,12 +17,23 @@ const props = withDefaults(
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
 }>();
-const hasOutput = () => !!props.tool.output && props.tool.output.length > 0;
-const open = ref(props.tool.defaultExpanded === true && hasOutput());
+const isRunningBash = computed(() => props.tool.status === 'running' && /^bash$/i.test(props.tool.name));
+const hasOutput = computed(() => !!props.tool.output && props.tool.output.length > 0);
+const canExpand = computed(() => hasOutput.value || isRunningBash.value);
+const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 function toggle() {
-  if (hasOutput()) open.value = !open.value;
+  if (canExpand.value) open.value = !open.value;
 }
+
+watch(
+  () => [props.tool.defaultExpanded, props.tool.output?.length, props.tool.status, props.tool.name] as const,
+  () => {
+    if (props.tool.defaultExpanded === true && canExpand.value) {
+      open.value = true;
+    }
+  },
+);
 
 const mark = () => (props.tool.status === 'error' ? '✕' : '✓');
 
@@ -140,7 +151,8 @@ function openMediaPreview(): void {
       <!-- When expanded, the command/summary moves here (and is hidden from the
            header) so it shows exactly once. -->
       <div v-if="summaryFull()" class="bb-summary">{{ summaryFull() }}</div>
-      <div v-for="(line, i) in tool.output" :key="i">{{ line }}</div>
+      <div v-if="!hasOutput" class="bb-empty">Waiting for output…</div>
+      <div v-for="(line, i) in tool.output ?? []" :key="i">{{ line }}</div>
     </div>
   </div>
 </template>
@@ -299,6 +311,10 @@ function openMediaPreview(): void {
   padding-bottom: 6px;
   margin-bottom: 6px;
   word-break: break-all;
+}
+.bb-empty {
+  color: var(--muted);
+  font-style: italic;
 }
 /* Mobile bubble layout: no left gutter indent, softer corners (prototype .tool). */
 .box.mob {

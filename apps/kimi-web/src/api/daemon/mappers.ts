@@ -541,8 +541,29 @@ export function toAppEvent(wire: WireEvent): AppEvent {
     case 'event.assistant.tool_use_completed':
     case 'event.assistant.completed':
     case 'event.tool.started':
+      return { type: 'unknown', raw: { _noop: true, _wireType: w.type } };
+
     case 'event.tool.output':
+      return {
+        type: 'toolOutput',
+        sessionId: w.session_id,
+        toolCallId: w.payload.tool_call_id,
+        outputChunk: w.payload.chunk,
+        stream: w.payload.stream,
+      };
+
     case 'event.tool.progress':
+      if (typeof w.payload.message === 'string' && w.payload.message.length > 0) {
+        return {
+          type: 'toolOutput',
+          sessionId: w.session_id,
+          toolCallId: w.payload.tool_call_id,
+          outputChunk: w.payload.message,
+          stream: 'stdout',
+        };
+      }
+      return { type: 'unknown', raw: { _noop: true, _wireType: w.type } };
+
     case 'event.tool.completed':
       return { type: 'unknown', raw: { _noop: true, _wireType: w.type } };
 

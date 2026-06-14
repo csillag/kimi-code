@@ -160,6 +160,25 @@ function findOptimisticUserEchoIndex(messages: AppMessage[], message: AppMessage
   return -1;
 }
 
+function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, outputChunk: string): AppMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    let contentChanged = false;
+    const content = message.content.map((part) => {
+      if (part.type !== 'toolUse' || part.toolCallId !== toolCallId) return part;
+      contentChanged = true;
+      return {
+        ...part,
+        outputLines: [...(part.outputLines ?? []), outputChunk],
+      };
+    });
+    if (!contentChanged) return message;
+    changed = true;
+    return { ...message, content };
+  });
+  return changed ? next : messages;
+}
+
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
@@ -397,6 +416,14 @@ export function reduceAppEvent(
         content[idx] = patched;
         return { ...m, content };
       });
+      break;
+    }
+
+    // -------------------------------------------------------------------------
+    case 'toolOutput': {
+      const sid = event.sessionId;
+      const msgs = next.messagesBySession[sid] ?? [];
+      next.messagesBySession[sid] = appendToolOutputToMessages(msgs, event.toolCallId, event.outputChunk);
       break;
     }
 

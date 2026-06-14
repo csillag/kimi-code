@@ -14,6 +14,7 @@ import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
 import type { AgentMember, ApprovalBlock, ChatTurn, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
+const BASH_TOOL_RE = /^bash$/i;
 // The builtin single-subagent spawn tool (collaboration/agent.ts). Detected by
 // name so a subagent renders as an AgentCard from the persisted transcript
 // alone — i.e. it survives a refresh even when the live task record (which only
@@ -537,6 +538,8 @@ export function messagesToTurns(
           // 'running' until the toolResult is absorbed (resolves to ok/error);
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
+          output: c.outputLines,
+          defaultExpanded: BASH_TOOL_RE.test(c.toolName) && (c.outputLines?.length ?? 0) > 0,
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });

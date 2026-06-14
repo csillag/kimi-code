@@ -55,4 +55,11 @@ describe('tool call summary placement', () => {
     expect(body).toBe(longCmd);
     expect(body).not.toContain('…');
   });
+
+  it('allows a running bash call to expand before final output exists', async () => {
+    const w = mountTool({ ...base, status: 'running', output: undefined });
+    await w.find('.bh').trigger('click');
+    expect(w.find('.box.open').exists()).toBe(true);
+    expect(w.find('.bb-empty').text()).toContain('Waiting for output');
+  });
 });
