@@ -154,6 +154,11 @@ export function toAppMessageContent(wire: WireMessageContent): AppMessageContent
         type: 'image',
         source: toAppImageSource(wire.source),
       };
+    case 'video':
+      return {
+        type: 'video',
+        source: toAppImageSource(wire.source),
+      };
     case 'file':
       return {
         type: 'file',
@@ -210,7 +215,8 @@ function toWireMessageContent(app: AppMessageContent): WireMessageContent {
         output: app.output,
         is_error: app.isError,
       };
-    case 'image': {
+    case 'image':
+    case 'video': {
       const src = app.source;
       let wireSrc: WireImageSource;
       if (src.kind === 'base64') {

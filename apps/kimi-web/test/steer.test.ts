@@ -127,7 +127,7 @@ describe('steerPrompt', () => {
     const { api, client } = await setup({ submitStatuses: ['running', 'queued'] });
     await client.createSession('/repo');
     await client.sendPrompt('first');                 // turn in flight
-    await client.steerPrompt('look at this', [{ fileId: 'file_1' }]);
+    await client.steerPrompt('look at this', [{ fileId: 'file_1', kind: 'image' }]);
 
     // The image rides the steered prompt's content alongside the text.
     const steered = (api.submitPrompt as ReturnType<typeof vi.fn>).mock.calls[1]![1] as {
@@ -140,14 +140,34 @@ describe('steerPrompt', () => {
 
     // The optimistic transcript echo shows the image too.
     const lastUser = client.turns.value.filter((t) => t.role === 'user').at(-1)!;
-    expect(lastUser.images).toEqual([{ url: '/files/file_1' }]);
+    expect(lastUser.images).toEqual([{ url: '/files/file_1', alt: undefined, kind: 'image' }]);
+  });
+
+  it('carries a video attachment as a video content block and a video echo', async () => {
+    const { api, client } = await setup({ submitStatuses: ['running', 'queued'] });
+    await client.createSession('/repo');
+    await client.sendPrompt('first');
+    await client.steerPrompt('watch this', [{ fileId: 'clip_1', kind: 'video' }]);
+
+    // A video attachment serializes to a `video` content block (not `image`).
+    const steered = (api.submitPrompt as ReturnType<typeof vi.fn>).mock.calls[1]![1] as {
+      content: { type: string; text?: string; source?: { kind: string; fileId: string } }[];
+    };
+    expect(steered.content).toEqual([
+      { type: 'text', text: 'watch this' },
+      { type: 'video', source: { kind: 'file', fileId: 'clip_1' } },
+    ]);
+
+    // The transcript echo carries the video kind so the bubble renders <video>.
+    const lastUser = client.turns.value.filter((t) => t.role === 'user').at(-1)!;
+    expect(lastUser.images).toEqual([{ url: '/files/clip_1', alt: undefined, kind: 'video' }]);
   });
 
   it('merges the daemon echo of an image steer into the optimistic message (no duplicate)', async () => {
     const { client, getHandlers } = await setup({ submitStatuses: ['running', 'queued'] });
     await client.createSession('/repo');
     await client.sendPrompt('first');
-    await client.steerPrompt('look at this', [{ fileId: 'file_1' }]);
+    await client.steerPrompt('look at this', [{ fileId: 'file_1', kind: 'image' }]);
 
     // The daemon echoes the steered user message with the SAME prompt_id but a
     // different image serialization (a resolved URL rather than our file ref).

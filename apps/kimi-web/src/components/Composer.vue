@@ -20,6 +20,8 @@ interface Attachment {
   localId: string;
   /** File name */
   name: string;
+  /** image or video — drives the chip preview and the content-block type. */
+  kind: 'image' | 'video';
   /** Object URL for the thumbnail preview */
   previewUrl: string;
   /** True while uploading */
@@ -67,10 +69,10 @@ const placeholder = computed(() =>
 );
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string }[] }];
+  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
-  steer: [payload: { text: string; attachments: { fileId: string }[] }];
+  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
   command: [cmd: string];
   interrupt: [];
   unqueue: [index: number];
@@ -334,15 +336,23 @@ function revokeAttachment(att: Attachment): void {
   try { URL.revokeObjectURL(att.previewUrl); } catch { /* ignore */ }
 }
 
+function mediaKind(mime: string): 'image' | 'video' | null {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return null;
+}
+
 async function addFiles(files: File[]): Promise<void> {
   if (!props.uploadImage) return;
-  const imageFiles = files.filter((f) => f.type.startsWith('image/'));
-  if (imageFiles.length === 0) return;
+  const media = files
+    .map((file) => ({ file, kind: mediaKind(file.type) }))
+    .filter((m): m is { file: File; kind: 'image' | 'video' } => m.kind !== null);
+  if (media.length === 0) return;
 
-  for (const file of imageFiles) {
+  for (const { file, kind } of media) {
     const localId = nextLocalId();
     const previewUrl = URL.createObjectURL(file);
-    const att: Attachment = { localId, name: file.name, previewUrl, uploading: true };
+    const att: Attachment = { localId, name: file.name, kind, previewUrl, uploading: true };
     attachments.value = [...attachments.value, att];
 
     // Upload in background; update the attachment when done
@@ -400,7 +410,7 @@ function handleDocumentPaste(e: ClipboardEvent): void {
 
   // From DataTransferItemList
   for (const item of Array.from(cd.items)) {
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
+    if (item.kind === 'file' && mediaKind(item.type)) {
       const blob = item.getAsFile();
       if (blob) addBlob(blob, blob.name || `paste-${Date.now()}.${item.type.split('/')[1] ?? 'png'}`);
     }
@@ -408,12 +418,12 @@ function handleDocumentPaste(e: ClipboardEvent): void {
 
   // From FileList (some browsers/OS put screenshots here directly)
   for (const file of Array.from(cd.files)) {
-    if (file.type.startsWith('image/')) {
+    if (mediaKind(file.type)) {
       addBlob(file, file.name);
     }
   }
 
-  if (files.length === 0) return; // No images — let normal text paste proceed unmodified.
+  if (files.length === 0) return; // No media — let normal text paste proceed unmodified.
 
   e.preventDefault();
   void addFiles(files);
@@ -524,7 +534,7 @@ function handleSubmit(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId! })),
+    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
 
   // Revoke object URLs for submitted attachments
@@ -555,7 +565,7 @@ function handleSteer(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId! })),
+    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
   };
   for (const att of attachments.value) {
     revokeAttachment(att);
@@ -927,8 +937,12 @@ function selectModel(modelId: string): void {
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
       <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
-        <!-- Thumbnail -->
-        <img class="att-thumb" :src="att.previewUrl" :alt="att.name" />
+        <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
+        <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
+        <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
+        <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
+          <svg viewBox="0 0 16 16" width="9" height="9" fill="currentColor"><path d="M5 3.5v9l7-4.5z"/></svg>
+        </span>
         <!-- Name + status -->
         <span class="att-name">{{ att.name }}</span>
         <!-- Spinner while uploading -->
@@ -1044,7 +1058,7 @@ function selectModel(modelId: string): void {
         v-if="hasUpload"
         ref="fileInputRef"
         type="file"
-        accept="image/*"
+        accept="image/*,video/*"
         multiple
         class="file-input-hidden"
         @change="handleFileInputChange"
@@ -1409,6 +1423,7 @@ function selectModel(modelId: string): void {
 }
 
 .att-chip {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1420,6 +1435,23 @@ function selectModel(modelId: string): void {
   font-size: calc(var(--ui-font-size) - 3px);
   color: var(--text);
   max-width: 220px;
+}
+
+/* Play glyph over a video thumbnail so it reads as a video, not a still. */
+.att-video-badge {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  pointer-events: none;
 }
 
 .att-chip.att-error {

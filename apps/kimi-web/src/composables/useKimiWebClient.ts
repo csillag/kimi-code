@@ -355,11 +355,15 @@ interface GitStatusEntry {
   deletions: number;
 }
 
-/** A prompt waiting for the session to go idle. Keeps the uploaded image
+/** An uploaded attachment to send with a prompt. `kind` drives the content-block
+    type (image vs video) so a still and a clip resolve to the right wire shape. */
+type PromptAttachment = { fileId: string; kind: 'image' | 'video' };
+
+/** A prompt waiting for the session to go idle. Keeps the uploaded
     fileIds so attachments survive queueing (not just the text). */
 interface QueuedPrompt {
   text: string;
-  attachments?: { fileId: string }[];
+  attachments?: PromptAttachment[];
 }
 
 interface ExtendedState extends KimiClientState {
@@ -2431,7 +2435,7 @@ async function createSessionInWorkspace(workspaceId: string): Promise<AppSession
 async function startSessionAndSendPrompt(
   workspaceId: string,
   text: string,
-  attachments?: { fileId: string }[],
+  attachments?: PromptAttachment[],
 ): Promise<void> {
   const ws = mergedWorkspaces.value.find((w) => w.id === workspaceId);
   if (!ws) return;
@@ -2670,7 +2674,7 @@ async function createSession(cwd: string, opts?: { title?: string; model?: strin
 
 /** Internal: submit a prompt to a specific session, bypassing the queue check.
     Returns true when the daemon accepted the prompt. */
-async function submitPromptInternal(sid: string, text: string, attachments?: { fileId: string }[]): Promise<boolean> {
+async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
   // Mark this session as having a prompt in flight BEFORE any await, so a racing
   // sendPrompt sees it and enqueues. Cleared when activity returns to idle.
   inFlightPromptSessions.add(sid);
@@ -2681,7 +2685,8 @@ async function submitPromptInternal(sid: string, text: string, attachments?: { f
     const content: import('../api/types').AppMessageContent[] = [];
     if (text) content.push({ type: 'text', text });
     for (const att of attachments ?? []) {
-      content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+      if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
+      else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
     }
     if (content.length === 0) {
       inFlightPromptSessions.delete(sid);
@@ -2794,7 +2799,7 @@ async function submitPromptInternal(sid: string, text: string, attachments?: { f
   }
 }
 
-async function sendPrompt(text: string, attachments?: { fileId: string }[]): Promise<void> {
+async function sendPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
   const sid = rawState.activeSessionId;
   if (!sid) return;
 
@@ -2817,14 +2822,14 @@ async function sendPrompt(text: string, attachments?: { fileId: string }[]): Pro
  * prompt behind the active one) then POST /prompts:steer. Falls back to a
  * normal send when the session is idle.
  */
-async function steerPrompt(text: string, attachments?: { fileId: string }[]): Promise<void> {
+async function steerPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
   const sid = rawState.activeSessionId;
   if (!sid) return;
 
   // Merge queued texts (oldest first) + the live text, like the TUI does.
   const queue = rawState.queuedBySession[sid] ?? [];
   const parts: string[] = [];
-  const mergedAttachments: { fileId: string }[] = [];
+  const mergedAttachments: PromptAttachment[] = [];
   for (const q of queue) {
     const trimmed = q.text.trim();
     if (trimmed) parts.push(trimmed);
@@ -2849,7 +2854,8 @@ async function steerPrompt(text: string, attachments?: { fileId: string }[]): Pr
   const content: import('../api/types').AppMessageContent[] = [];
   if (merged) content.push({ type: 'text', text: merged });
   for (const att of mergedAttachments) {
-    content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+    if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
+    else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
   }
   const tempId = nextOptimisticMsgId();
   const optimisticMsg: AppMessage = {
@@ -2935,7 +2941,7 @@ async function uploadImage(file: Blob, name?: string): Promise<{ fileId: string;
 }
 
 /** Enqueue a message for the active session; flushed when activity returns to idle */
-function enqueue(text: string, attachments?: { fileId: string }[]): void {
+function enqueue(text: string, attachments?: PromptAttachment[]): void {
   const sid = rawState.activeSessionId;
   if (!sid) return;
   const current = rawState.queuedBySession[sid] ?? [];

@@ -138,7 +138,7 @@ export function registerPromptsRoutes(
         const result = await ix.invokeFunction(async (a) =>
           a.get(IPromptService).submit(
             session_id,
-            await resolvePromptImageFiles(body, a.get(IFileStore)),
+            await resolvePromptMediaFiles(body, a.get(IFileStore)),
           ),
         );
         reply.send(okEnvelope(result, req.id));
@@ -259,35 +259,34 @@ export function registerPromptsRoutes(
   );
 }
 
-async function resolvePromptImageFiles(
+async function resolvePromptMediaFiles(
   body: PromptSubmission,
   store: IFileStore,
 ): Promise<PromptSubmission> {
   let changed = false;
   const content: PromptSubmission['content'] = [];
   for (const part of body.content) {
-    if (part.type !== 'image' || part.source.kind !== 'file') {
+    if ((part.type !== 'image' && part.type !== 'video') || part.source.kind !== 'file') {
       content.push(part);
       continue;
     }
     const file = await store.get(part.source.file_id);
-    assertImageFile(file);
+    assertMediaFile(file, part.type);
     const data = await readFile(file.blobPath);
-    content.push({
-      type: 'image',
-      source: {
-        kind: 'base64',
-        media_type: file.meta.media_type,
-        data: data.toString('base64'),
-      },
-    });
+    const source = {
+      kind: 'base64' as const,
+      media_type: file.meta.media_type,
+      data: data.toString('base64'),
+    };
+    content.push(part.type === 'video' ? { type: 'video', source } : { type: 'image', source });
     changed = true;
   }
   return changed ? { ...body, content } : body;
 }
 
-function assertImageFile(file: GetResult): void {
-  if (file.meta.media_type.toLowerCase().startsWith('image/')) return;
+function assertMediaFile(file: GetResult, expected: 'image' | 'video'): void {
+  const prefix = expected === 'video' ? 'video/' : 'image/';
+  if (file.meta.media_type.toLowerCase().startsWith(prefix)) return;
   throw new PromptImageFileTypeError(file.meta.id, file.meta.media_type);
 }
 

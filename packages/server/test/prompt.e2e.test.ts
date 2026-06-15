@@ -168,6 +168,8 @@ const ONE_BY_ONE_PNG = Buffer.from(
   'base64',
 );
 
+const TINY_MP4 = Buffer.from('fake mp4 video data');
+
 async function createSession(r: RunningServer): Promise<string> {
   const res = await appOf(r).inject({
     method: 'POST',
@@ -487,6 +489,182 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
         content: [
           {
             type: 'image',
+            source: { kind: 'file', file_id: uploadEnv.data!.id },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(40001);
+    expect(submitted).toBe(false);
+  });
+
+  it('submits video URL content without a file upload step', async () => {
+    let submittedSid: string | undefined;
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (sessionId, body) => {
+            submittedSid = sessionId;
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const videoUrl = 'https://example.com/videos/sample.mp4?size=full#frame';
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'describe this video' },
+          {
+            type: 'video',
+            source: { kind: 'url', url: videoUrl },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf(res.json());
+    expect(env.code).toBe(0);
+    expect(submittedSid).toBe(sid);
+    expect(submitted?.content).toEqual([
+      { type: 'text', text: 'describe this video' },
+      {
+        type: 'video',
+        source: { kind: 'url', url: videoUrl },
+      },
+    ]);
+  });
+
+  it('uploads a real video file and resolves it before submitting the prompt', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'tiny.mp4',
+        contentType: 'video/mp4',
+        data: TINY_MP4,
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string; size: number }>(
+      uploadRes.json(),
+    );
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data).not.toBeNull();
+    expect(uploadEnv.data?.media_type).toBe('video/mp4');
+    expect(uploadEnv.data?.size).toBe(TINY_MP4.length);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'what happens in this video?' },
+          {
+            type: 'video',
+            source: { kind: 'file', file_id: uploadEnv.data!.id },
+          },
+        ],
+      },
+    });
+    const env = envelopeOf<unknown>(res.json());
+    expect(env.code).toBe(0);
+    expect(submitted?.content).toEqual([
+      { type: 'text', text: 'what happens in this video?' },
+      {
+        type: 'video',
+        source: {
+          kind: 'base64',
+          media_type: 'video/mp4',
+          data: TINY_MP4.toString('base64'),
+        },
+      },
+    ]);
+  });
+
+  it('rejects non-video file_id content before submitting the prompt', async () => {
+    let submitted = false;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async () => {
+            submitted = true;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: [{ type: 'text', text: 'stub' }],
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'note.txt',
+        contentType: 'text/plain',
+        data: Buffer.from('not a video'),
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data).not.toBeNull();
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'video',
             source: { kind: 'file', file_id: uploadEnv.data!.id },
           },
         ],

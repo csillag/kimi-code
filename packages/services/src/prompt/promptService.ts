@@ -103,7 +103,8 @@ interface PromptState {
 
 type CorePromptPart =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image_url'; readonly imageUrl: { readonly url: string } };
+  | { readonly type: 'image_url'; readonly imageUrl: { readonly url: string } }
+  | { readonly type: 'video_url'; readonly videoUrl: { readonly url: string } };
 
 function toPromptItem(state: PromptState, status: 'running' | 'queued'): PromptItem {
   return {
@@ -132,6 +133,21 @@ function contentToCoreParts(content: PromptSubmission['content']): CorePromptPar
           input.push({
             type: 'image_url',
             imageUrl: {
+              url: `data:${part.source.media_type};base64,${part.source.data}`,
+            },
+          });
+        }
+        break;
+      case 'video':
+        if (part.source.kind === 'url') {
+          input.push({
+            type: 'video_url',
+            videoUrl: { url: part.source.url },
+          });
+        } else if (part.source.kind === 'base64') {
+          input.push({
+            type: 'video_url',
+            videoUrl: {
               url: `data:${part.source.media_type};base64,${part.source.data}`,
             },
           });
