@@ -1699,7 +1699,7 @@ function selectModel(modelId: string): void {
   border-radius: 6px;
   font-size: var(--ui-font-size);
   line-height: 16px;
-  color: var(--text);
+  color: var(--dim);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s;
