@@ -8,6 +8,8 @@ export default {
   login: { desc: '通过 API Key 登录平台' },
   permission: { desc: '切换审批模式 (manual/auto/yolo)' },
   plan: { desc: '切换计划模式 开/关' },
+  swarm: { desc: '切换 swarm 模式；/swarm <任务> 直接在 swarm 下执行' },
+  goal: { desc: '创建/控制目标：/goal <目标>、/goal pause|resume|cancel' },
   yolo: { desc: '自动批准一切 (yolo 模式)' },
   auto: { desc: '自动批准安全的读写' },
   thinking: { desc: '设置思考强度' },
