@@ -1740,7 +1740,7 @@ export class KimiTUI {
       if (data.result === 'cancelled') {
         block.markCanceled();
       } else {
-        block.markDone(data.tokensBefore, data.tokensAfter);
+        block.markDone(data.tokensBefore, data.tokensAfter, data.summary);
       }
       return block;
     }

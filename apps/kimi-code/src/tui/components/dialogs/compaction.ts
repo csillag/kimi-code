@@ -32,6 +32,9 @@ export class CompactionComponent extends Container {
   private canceled = false;
   private tokensBefore: number | undefined;
   private tokensAfter: number | undefined;
+  private summary: string | undefined;
+  private summaryText: Text | undefined;
+  private expanded = false;
 
   constructor(ui?: TUI, instruction?: string | undefined, tip?: string) {
     super();
@@ -70,13 +73,17 @@ export class CompactionComponent extends Container {
     super.invalidate();
   }
 
-  markDone(tokensBefore?: number, tokensAfter?: number): void {
+  markDone(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
     if (this.done || this.canceled) return;
     this.done = true;
     this.tokensBefore = tokensBefore;
     this.tokensAfter = tokensAfter;
+    this.summary = summary;
     this.stopBlink();
     this.headerText.setText(this.buildHeader());
+    if (this.expanded) {
+      this.addSummaryChild();
+    }
     this.ui?.requestRender();
   }
 
@@ -86,6 +93,39 @@ export class CompactionComponent extends Container {
     this.stopBlink();
     this.headerText.setText(this.buildHeader());
     this.ui?.requestRender();
+  }
+
+  setExpanded(expanded: boolean): void {
+    if (this.expanded === expanded) return;
+    this.expanded = expanded;
+    if (expanded) {
+      this.addSummaryChild();
+    } else {
+      this.removeSummaryChild();
+    }
+    this.headerText.setText(this.buildHeader());
+    this.ui?.requestRender();
+  }
+
+  private addSummaryChild(): void {
+    if (this.summaryText !== undefined || this.summary === undefined || this.summary.length === 0) {
+      return;
+    }
+    const indentedSummary = this.summary
+      .split('\n')
+      .map((line) => `  ${line}`)
+      .join('\n');
+    this.summaryText = new Text(currentTheme.dim(indentedSummary), 0, 0);
+    this.addChild(this.summaryText);
+  }
+
+  private removeSummaryChild(): void {
+    if (this.summaryText === undefined) return;
+    const index = this.children.indexOf(this.summaryText);
+    if (index !== -1) {
+      this.children.splice(index, 1);
+    }
+    this.summaryText = undefined;
   }
 
   dispose(): void {
@@ -100,7 +140,11 @@ export class CompactionComponent extends Container {
         this.tokensBefore !== undefined && this.tokensAfter !== undefined
           ? currentTheme.dim(` (${String(this.tokensBefore)} → ${String(this.tokensAfter)} tokens)`)
           : '';
-      return `${bullet}${label}${detail}`;
+      const shortcutHint =
+        this.summary !== undefined && this.summary.length > 0
+          ? currentTheme.dim(` (Ctrl-O to ${this.expanded ? 'hide' : 'show'} compaction summary)`)
+          : '';
+      return `${bullet}${label}${detail}${shortcutHint}`;
     }
     if (this.canceled) {
       const bullet = currentTheme.fg('warning', STATUS_BULLET);

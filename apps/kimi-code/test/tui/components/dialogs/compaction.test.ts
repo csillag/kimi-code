@@ -50,6 +50,7 @@ describe('CompactionComponent', () => {
 
       expect(text).toContain('Compaction complete');
       expect(text).not.toContain('Tip:');
+      expect(text).not.toContain('Ctrl-O');
     } finally {
       component.dispose();
     }
@@ -65,6 +66,47 @@ describe('CompactionComponent', () => {
 
       expect(text).toContain('Compaction cancelled');
       expect(text).not.toContain('Compacting context...');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('keeps the completed compaction summary hidden until expanded', () => {
+    const component = new CompactionComponent();
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      const collapsed = component.render(120).map(strip).join('\n');
+
+      expect(collapsed).toContain('Compaction complete');
+      expect(collapsed).toContain('120 → 24 tokens');
+      expect(collapsed).toContain('Ctrl-O to show compaction summary');
+      expect(collapsed).not.toContain('Keep the src/tui compaction notes.');
+
+      component.setExpanded(true);
+      const expanded = component.render(120).map(strip).join('\n');
+
+      expect(expanded).toContain('Compaction complete');
+      expect(expanded).toContain('Ctrl-O to hide compaction summary');
+      expect(expanded).toContain('Keep the src/tui compaction notes.');
+    } finally {
+      component.dispose();
+    }
+  });
+
+  it('hides the compaction summary again when collapsed', () => {
+    const component = new CompactionComponent();
+
+    try {
+      component.markDone(120, 24, 'Keep the src/tui compaction notes.');
+      component.setExpanded(true);
+      component.setExpanded(false);
+      const text = component.render(120).map(strip).join('\n');
+
+      expect(text).toContain('Compaction complete');
+      expect(text).toContain('Ctrl-O to show compaction summary');
+      expect(text).not.toContain('Ctrl-O to hide compaction summary');
+      expect(text).not.toContain('Keep the src/tui compaction notes.');
     } finally {
       component.dispose();
     }

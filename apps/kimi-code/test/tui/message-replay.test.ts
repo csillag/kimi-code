@@ -1030,15 +1030,20 @@ describe('KimiTUI resume message replay', () => {
       (entry) => entry.compactionData !== undefined,
     );
     expect(compactionEntry?.compactionData).toEqual({
+      summary: 'Compacted transcript summary.',
       tokensBefore: 120,
       tokensAfter: 24,
       instruction: 'preserve implementation notes',
     });
-    const transcript = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
-    expect(transcript).toContain('Compaction complete');
-    expect(transcript).toContain('120 → 24 tokens');
-    expect(transcript).toContain('preserve implementation notes');
-    expect(transcript).not.toContain('Compacted transcript summary.');
+    const collapsed = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(collapsed).toContain('Compaction complete');
+    expect(collapsed).toContain('120 → 24 tokens');
+    expect(collapsed).toContain('preserve implementation notes');
+    expect(collapsed).not.toContain('Compacted transcript summary.');
+
+    driver.state.editor.onToggleToolExpand?.();
+    const expanded = stripAnsi(driver.state.transcriptContainer.render(120).join('\n'));
+    expect(expanded).toContain('Compacted transcript summary.');
   });
 
   it('renders replayed cancelled compaction records as cancelled compaction blocks', async () => {
