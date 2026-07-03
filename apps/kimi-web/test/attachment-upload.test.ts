@@ -124,6 +124,19 @@ describe('useAttachmentUpload', () => {
     });
   });
 
+  it('loadAttachments replaces any unsent draft attachments instead of appending', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([imageFile('draft.png')]));
+    expect(att.attachments.value).toHaveLength(1);
+
+    att.loadAttachments([
+      { fileId: 'f_existing', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'refill.png' },
+    ]);
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0].name).toBe('refill.png');
+  });
+
   it('isolates attachments between sessions', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const sessionId = ref<string | undefined>('sess-a');

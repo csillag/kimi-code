@@ -212,9 +212,13 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   /** Refill the attachment strip from already-uploaded files (used when a queued
    *  prompt or an undone message is loaded back into the composer). The fileIds
    *  are reused directly (no re-upload); for a protected getFileUrl preview we
-   *  fetch an authenticated blob URL so the thumbnail doesn't 401. */
+   *  fetch an authenticated blob URL so the thumbnail doesn't 401. Replaces any
+   *  unsent draft attachments (mirroring loadForEdit(text), which overwrites) so
+   *  a later submit sends exactly the edited message's files, not a mix. */
   function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
     const sid = sessionId() ?? '';
+    for (const existing of attachmentsBySession.value[sid] ?? []) revokeAttachment(existing);
+    setForSession(sid, []);
     for (const att of atts) {
       const localId = nextLocalId();
       const localSrc = /^(data:|blob:)/i.test(att.url);
