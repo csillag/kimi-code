@@ -147,6 +147,29 @@ describe('useAttachmentUpload', () => {
     expect(att.attachments.value).toHaveLength(0);
   });
 
+  it('loadAttachments re-uploads a fileId-less data URL so it becomes resendable', async () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f_new', name: 'a.png', mediaType: 'image/png' });
+    const att = setup(uploadImage);
+    const blob = new Blob(['x'], { type: 'image/png' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ blob: () => Promise.resolve(blob) }));
+
+    att.loadAttachments([{ kind: 'image', url: 'data:image/png;base64,AAAA', name: 'a.png' }]);
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0].uploading).toBe(true);
+
+    // Flush the fetch → blob → upload promise chain so the re-upload resolves.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(att.attachments.value[0].uploading).toBe(false);
+    expect(att.attachments.value[0].fileId).toBe('f_new');
+    expect(uploadImage).toHaveBeenCalledOnce();
+  });
+
+  it('loadAttachments skips a fileId-less data URL when re-upload is unavailable', () => {
+    const att = setup(undefined);
+    att.loadAttachments([{ kind: 'image', url: 'data:image/png;base64,AAAA', name: 'a.png' }]);
+    expect(att.attachments.value).toHaveLength(0);
+  });
+
   it('isolates attachments between sessions', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const sessionId = ref<string | undefined>('sess-a');

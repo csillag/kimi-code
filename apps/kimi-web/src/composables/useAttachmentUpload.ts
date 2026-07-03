@@ -209,6 +209,19 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     setForSession(sid, []);
   }
 
+  function patchAttachment(sid: string, localId: string, patch: Partial<Attachment>): void {
+    const current = attachmentsBySession.value[sid] ?? [];
+    if (!current.some((a) => a.localId === localId)) return;
+    setForSession(
+      sid,
+      current.map((a) => (a.localId === localId ? { ...a, ...patch } : a)),
+    );
+  }
+
+  function dataUrlToBlob(url: string): Promise<Blob> {
+    return fetch(url).then((r) => r.blob());
+  }
+
   /** Refill the attachment strip from already-uploaded files (used when a queued
    *  prompt or an undone message is loaded back into the composer). The fileIds
    *  are reused directly (no re-upload); for a protected getFileUrl preview we
@@ -221,34 +234,65 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     setForSession(sid, []);
     for (const att of atts) {
       const localId = nextLocalId();
-      const localSrc = /^(data:|blob:)/i.test(att.url);
-      const entry: Attachment = {
-        localId,
-        name: att.name ?? att.kind,
-        kind: att.kind,
-        previewUrl: att.url,
-        uploading: false,
-        fileId: att.fileId,
-      };
-      setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
-      if (att.fileId && !localSrc) {
-        void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
-          const blobUrl = URL.createObjectURL(blob);
-          const current = attachmentsBySession.value[sid] ?? [];
-          if (!current.some((a) => a.localId === localId)) {
-            URL.revokeObjectURL(blobUrl);
-            return;
-          }
-          setForSession(
-            sid,
-            (attachmentsBySession.value[sid] ?? []).map((a) =>
-              a.localId === localId ? { ...a, previewUrl: blobUrl } : a,
-            ),
-          );
-        }).catch(() => {
-          // Keep the fallback previewUrl (honest broken state if it 401s).
-        });
+      const isData = /^data:/i.test(att.url);
+      const isBlob = /^blob:/i.test(att.url);
+      const name = att.name ?? att.kind;
+
+      if (att.fileId) {
+        // Ready as-is; fetch an authenticated thumbnail for protected URLs.
+        const entry: Attachment = {
+          localId,
+          name,
+          kind: att.kind,
+          previewUrl: att.url,
+          uploading: false,
+          fileId: att.fileId,
+        };
+        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        if (!isData && !isBlob) {
+          void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
+            const blobUrl = URL.createObjectURL(blob);
+            const current = attachmentsBySession.value[sid] ?? [];
+            if (!current.some((a) => a.localId === localId)) {
+              URL.revokeObjectURL(blobUrl);
+              return;
+            }
+            patchAttachment(sid, localId, { previewUrl: blobUrl });
+          }).catch(() => {
+            // Keep the fallback previewUrl (honest broken state if it 401s).
+          });
+        }
+      } else if (isData) {
+        // No fileId (e.g. an image the server base64-inlined): re-upload so the
+        // chip is actually resendable — otherwise handleSubmit silently drops it.
+        const upload = uploadImage();
+        if (!upload) continue;
+        const entry: Attachment = {
+          localId,
+          name,
+          kind: att.kind,
+          previewUrl: att.url,
+          uploading: true,
+        };
+        setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+        void dataUrlToBlob(att.url)
+          .then((blob) => {
+            const fname = name.includes('.') ? name : `${name}.${blob.type.split('/')[1] ?? 'bin'}`;
+            return upload(blob, fname);
+          })
+          .then((result) => {
+            patchAttachment(sid, localId, {
+              uploading: false,
+              fileId: result?.fileId,
+              error: result === null,
+            });
+          })
+          .catch(() => {
+            patchAttachment(sid, localId, { uploading: false, error: true });
+          });
       }
+      // No fileId and not a data URL — can't make resendable, skip rather than
+      // show a chip that handleSubmit would silently drop.
     }
   }
 
