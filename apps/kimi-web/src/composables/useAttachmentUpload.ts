@@ -10,6 +10,7 @@
 // paste listener + object-URL cleanup lifecycle.
 
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { getKimiWebApi } from '../api';
 
 export interface Attachment {
   /** Unique local id (used as :key) */
@@ -208,6 +209,45 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     setForSession(sid, []);
   }
 
+  /** Refill the attachment strip from already-uploaded files (used when a queued
+   *  prompt or an undone message is loaded back into the composer). The fileIds
+   *  are reused directly (no re-upload); for a protected getFileUrl preview we
+   *  fetch an authenticated blob URL so the thumbnail doesn't 401. */
+  function loadAttachments(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+    const sid = sessionId() ?? '';
+    for (const att of atts) {
+      const localId = nextLocalId();
+      const localSrc = /^(data:|blob:)/i.test(att.url);
+      const entry: Attachment = {
+        localId,
+        name: att.name ?? att.kind,
+        kind: att.kind,
+        previewUrl: att.url,
+        uploading: false,
+        fileId: att.fileId,
+      };
+      setForSession(sid, [...(attachmentsBySession.value[sid] ?? []), entry]);
+      if (att.fileId && !localSrc) {
+        void getKimiWebApi().getFileBlob(att.fileId).then((blob) => {
+          const blobUrl = URL.createObjectURL(blob);
+          const current = attachmentsBySession.value[sid] ?? [];
+          if (!current.some((a) => a.localId === localId)) {
+            URL.revokeObjectURL(blobUrl);
+            return;
+          }
+          setForSession(
+            sid,
+            (attachmentsBySession.value[sid] ?? []).map((a) =>
+              a.localId === localId ? { ...a, previewUrl: blobUrl } : a,
+            ),
+          );
+        }).catch(() => {
+          // Keep the fallback previewUrl (honest broken state if it 401s).
+        });
+      }
+    }
+  }
+
   // Close the preview lightbox when switching sessions — it may reference an
   // attachment that belongs to the previous session.
   watch(sessionId, () => {
@@ -241,5 +281,6 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     handleDragLeave,
     handleDrop,
     clearAfterSubmit,
+    loadAttachments,
   };
 }

@@ -109,6 +109,21 @@ describe('useAttachmentUpload', () => {
     expect(revokeObjectURL).toHaveBeenCalledTimes(2);
   });
 
+  it('loadAttachments refills an already-uploaded attachment without re-uploading', () => {
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_existing', kind: 'image', url: 'data:image/png;base64,AAAA', name: 'a.png' },
+    ]);
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({
+      fileId: 'f_existing',
+      kind: 'image',
+      name: 'a.png',
+      uploading: false,
+      previewUrl: 'data:image/png;base64,AAAA',
+    });
+  });
+
   it('isolates attachments between sessions', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const sessionId = ref<string | undefined>('sess-a');

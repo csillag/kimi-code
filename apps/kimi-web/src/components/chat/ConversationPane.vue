@@ -119,7 +119,7 @@ const emit = defineEmits<{
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [text: string];
+  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -190,10 +190,16 @@ const copyConversationCopied = ref(false);
 const goalExpandSignal = ref(0);
 let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Load text into whichever composer is currently mounted (docked vs the
-    empty-session composer). Used by App for "edit & resend the last message". */
-function loadComposerForEdit(value: string): void {
-  (dockedComposerRef.value ?? emptyComposerRef.value)?.loadForEdit(value);
+/** Load text (and any attachments) into whichever composer is currently mounted
+    (docked vs the empty-session composer). Used by App for "edit & resend the
+    last message", and by the queue when a pending prompt is loaded for edit. */
+function loadComposerForEdit(
+  value: string,
+  attachments?: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[],
+): void {
+  const composer = dockedComposerRef.value ?? emptyComposerRef.value;
+  composer?.loadForEdit(value);
+  if (attachments?.length) composer?.loadAttachmentsForEdit(attachments);
 }
 
 function handleCopyConversationCopied(): void {
@@ -365,7 +371,11 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
-type ComposerHandle = { loadForEdit: (value: string) => void; focus: () => void };
+type ComposerHandle = {
+  loadForEdit: (value: string) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  focus: () => void;
+};
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
 function toHtmlEl(el: RefArg): HTMLElement | null {
@@ -396,6 +406,10 @@ function bindChatDock(el: RefArg): void {
   ) {
     dockedComposerRef.value = {
       loadForEdit: el.loadForEdit.bind(el),
+      loadAttachmentsForEdit:
+        'loadAttachmentsForEdit' in el && typeof el.loadAttachmentsForEdit === 'function'
+          ? el.loadAttachmentsForEdit.bind(el)
+          : () => {},
       focus: el.focus.bind(el),
     };
   } else {
@@ -759,18 +773,23 @@ function handleComposerSubmit(payload: { text: string; attachments: { fileId: st
 // returns. Scrolling here would target the pre-rewind bottom and fight the
 // bubble-exit animation, so we only arm the follow state; the scrollKey watcher
 // smooth-scrolls once the truncated turns actually land.
-function handleEditMessage(text: string): void {
+function handleEditMessage(payload: {
+  text: string;
+  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+}): void {
   following.value = true;
   showPill.value = false;
   userActionFollowUntil = Date.now() + USER_ACTION_FOLLOW_LOCK_MS;
-  emit('editMessage', text);
+  emit('editMessage', payload);
 }
 
-// A queued message was clicked for editing: load its text back into the active
-// composer, then let the parent dequeue it (mirrors the old dock-queue flow).
+// A queued message was clicked for editing: load its text (and any attachments)
+// back into the active composer, then let the parent dequeue it (mirrors the old
+// dock-queue flow).
 function handleEditQueued(index: number): void {
-  const text = props.queued?.[index]?.text ?? '';
-  if (text) loadComposerForEdit(text);
+  const item = props.queued?.[index];
+  const text = item?.text ?? '';
+  if (text || (item?.attachments?.length ?? 0) > 0) loadComposerForEdit(text, item?.attachments);
   emit('editQueued', index);
 }
 
