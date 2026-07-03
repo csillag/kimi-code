@@ -137,6 +137,16 @@ describe('useAttachmentUpload', () => {
     expect(att.attachments.value[0].name).toBe('refill.png');
   });
 
+  it('loadAttachments with an empty list clears the attachment strip', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([imageFile('draft.png')]));
+    expect(att.attachments.value).toHaveLength(1);
+
+    att.loadAttachments([]);
+    expect(att.attachments.value).toHaveLength(0);
+  });
+
   it('isolates attachments between sessions', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const sessionId = ref<string | undefined>('sess-a');

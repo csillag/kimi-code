@@ -199,7 +199,9 @@ function loadComposerForEdit(
 ): void {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   composer?.loadForEdit(value);
-  if (attachments?.length) composer?.loadAttachmentsForEdit(attachments);
+  // Always replace the attachment strip (even when empty) so a text-only edit
+  // clears media left over from a prior edit instead of sending it on resubmit.
+  composer?.loadAttachmentsForEdit(attachments ?? []);
 }
 
 function handleCopyConversationCopied(): void {
