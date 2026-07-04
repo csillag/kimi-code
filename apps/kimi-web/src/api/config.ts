@@ -31,9 +31,19 @@ export function readKimiApiConfig(): KimiApiConfig {
 //    talks to its own origin.
 //  - prod: `kimi web` serves this built SPA from the server itself, so the
 //    server's origin already is the API origin.
+//  - embedded (reverse-proxy subpath / iframe): the SPA is served under a path
+//    prefix and can only reach the server through that same prefix. We therefore
+//    resolve against `document.baseURI` (which reflects the embedder-injected
+//    `<base href="<subpath>/">`) rather than the bare origin, so REST + WS URLs
+//    carry the prefix and the proxy routes them to the daemon. At direct-serve
+//    the built-in `<base href="/">` makes baseURI === origin + '/', so this is
+//    identical to the same-origin behavior above.
 // Set VITE_KIMI_SERVER_HTTP_URL to connect directly to an absolute server
 // origin instead (that path does require the server to send CORS headers).
 function defaultServerOrigin(): string {
+  if (typeof document !== 'undefined' && document.baseURI) {
+    return document.baseURI;
+  }
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin;
   }
