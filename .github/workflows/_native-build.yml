@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      version:
+        description: 'Override the built CLI version (baked via package.json#version). Empty = use the checked-out package.json version unchanged.'
+        required: false
+        type: string
+        default: ''
     secrets:
       APPLE_CERTIFICATE_P12:
         required: false
@@ -69,6 +74,21 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Override CLI version (fork builds)
+        if: inputs.version != ''
+        shell: bash
+        env:
+          KIMI_FORK_VERSION: ${{ inputs.version }}
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const p = "apps/kimi-code/package.json";
+            const j = JSON.parse(fs.readFileSync(p, "utf8"));
+            j.version = process.env.KIMI_FORK_VERSION;
+            fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          '
+          echo "Built version pinned to $KIMI_FORK_VERSION"
 
       - name: Setup macOS keychain (release only)
         if: runner.os == 'macOS' && inputs.sign-macos

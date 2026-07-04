@@ -1,0 +1,115 @@
+# Fork binary build + GitHub Release publisher.
+#
+# Manual (`workflow_dispatch`) pipeline that builds the native `kimi` SEA
+# binaries for this fork and publishes them as GitHub Release assets, so
+# `smart-install.sh` (and optio) can fetch them. Mirrors the csillag/opencode
+# fork's build-combined.yml, adapted to kimi's reusable native build:
+#
+#   prep     -> derive fork version `<upstream>-csillag.<N>` + release tag
+#   build    -> reuse ./.github/workflows/_native-build.yml (6 targets, unsigned)
+#   publish  -> produce manifest.json + `gh release create` with all assets
+#
+# Single feature branch (this repo has one code branch, csillag/iframe, which
+# this infra branch is based on), so the tag carries one commit SHA — unlike
+# the opencode fork which merges two branches and carries two SHAs.
+name: Build Fork Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish a GitHub Release (false = build + upload artifacts only)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      tag: ${{ steps.derive.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Derive fork version + release tag
+        id: derive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Upstream version base from the CLI package.json (e.g. 0.22.3).
+          UPSTREAM=$(node -p "require('./apps/kimi-code/package.json').version")
+          BASE="${UPSTREAM}-csillag"          # counter namespace: <upstream>-csillag.<N>
+          SHA=$(git rev-parse --short HEAD)
+
+          # N = highest existing fork-release counter + 1. Existing tags look like
+          # v<upstream>-csillag.<N>.<sha>; extract the first field after the prefix.
+          PREFIX="v${BASE}."
+          MAX=0
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            rest="${tag#"$PREFIX"}"
+            [ "$rest" = "$tag" ] && continue     # prefix didn't match
+            n="${rest%%.*}"                       # first field = counter
+            case "$n" in ''|*[!0-9]*) continue ;; esac
+            [ "$n" -gt "$MAX" ] && MAX=$n
+          done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName -q '.[].tagName' 2>/dev/null || true)
+          N=$((MAX + 1))
+
+          VERSION="${BASE}.${N}"                 # baked into the binary; `kimi --version`
+          TAG="v${VERSION}.${SHA}"               # GitHub release tag
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "Fork build: version=$VERSION tag=$TAG"
+
+  build:
+    needs: prep
+    uses: ./.github/workflows/_native-build.yml
+    with:
+      upload-artifact-prefix: kimi-code-native
+      retention-days: 7
+      sign-macos: false
+      version: ${{ needs.prep.outputs.version }}
+
+  publish:
+    if: ${{ inputs.release }}
+    needs: [prep, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-native-*
+          merge-multiple: true
+          path: dist-native-release
+
+      - name: Produce manifest.json
+        env:
+          RELEASE_TAG: ${{ needs.prep.outputs.tag }}
+        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prep.outputs.tag }}
+          FORK_VERSION: ${{ needs.prep.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist-native-release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TAG" \
+            --notes "Fork build of kimi-code with the iframe-embedding fixes (csillag/iframe).
+
+          \`kimi --version\` reports \`${FORK_VERSION}\`.
+          Assets: per-target \`kimi-code-<target>.zip\` (+ \`.sha256\`) and \`manifest.json\`.
+          Install/upgrade with smart-install.sh."
