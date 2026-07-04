@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico" sizes="64x64" />
+    <!-- Anchor all relative URLs (the `base: './'` build emits relative asset
+         paths) to the origin root for direct serving, so a deep-link hard-refresh
+         at e.g. /sessions/<id> still resolves ./assets/* to /assets/*. When this
+         app is embedded under a reverse-proxy subpath, the embedder injects its
+         own <base href="<subpath>/"> earlier in <head>; the FIRST <base href> in
+         document order wins, so the embedder's prefix takes precedence in-frame. -->
+    <base href="/" />
+    <link rel="icon" href="favicon.ico" sizes="64x64" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />

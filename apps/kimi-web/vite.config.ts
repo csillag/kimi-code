@@ -12,6 +12,14 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 };
 
 export default defineConfig({
+  // Relative asset base: emit `./assets/foo.js` (not `/assets/foo.js`) in the
+  // built index.html and chunk imports, so a document loaded under an arbitrary
+  // reverse-proxy subpath (e.g. an optio `/api/widget/<db>/<prefix>/<pid>/`
+  // iframe mount) resolves its own asset URLs against that subpath — via the
+  // embedder-injected `<base href>` — rather than against the origin root.
+  // Direct-serve at `/` is unaffected; deep-link hard-refresh is kept correct by
+  // the static `<base href="/">` in index.html (see that file).
+  base: './',
   plugins: [vue(), Icons({ compiler: 'vue3' })],
   // Expose the dev proxy's upstream server target to the client so the UI can
   // show which server it is connected to (the browser otherwise only sees its
