@@ -1,0 +1,177 @@
+# Fork binary build + GitHub Release publisher (multi-feature-branch model).
+#
+# Manual (`workflow_dispatch`) pipeline that COMBINES the fork's independent
+# feature branches, builds the native `kimi` SEA binaries from the combined
+# tree, and publishes them as GitHub Release assets. Mirrors the csillag/opencode
+# fork's build-combined.yml, generalized to N feature branches and adapted to
+# kimi's reusable native build:
+#
+#   prep     -> octopus merge-base of all feature branches, merge each onto it
+#               into a temp branch, push it; derive version + release tag
+#   build    -> reuse ./.github/workflows/_native-build.yml against that temp
+#               branch (ref input), unsigned, version baked in
+#   publish  -> produce manifest.json + `gh release create` with all assets
+#   cleanup  -> delete the temp branch
+#
+# Each feature branch stays clean (independently PR-able upstream); the combined
+# tree exists only for the duration of a build. This infra lives on `main`.
+name: Build Fork Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      branches:
+        description: 'Space-separated feature branches to combine (in merge order)'
+        required: false
+        type: string
+        default: >-
+          csillag/iframe
+          csillag/web-permission-display-fix
+          csillag/hide-sidebar
+      release:
+        description: 'Publish a GitHub Release (false = build + upload artifacts only)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      tag: ${{ steps.derive.outputs.tag }}
+      combined_ref: ${{ steps.combine.outputs.combined_ref }}
+      summary: ${{ steps.combine.outputs.summary }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Combine feature branches onto their shared base
+        id: combine
+        run: |
+          set -euo pipefail
+          git config user.email "ci@local"
+          git config user.name "Build CI"
+          read -r -a BRANCHES <<< "${{ inputs.branches }}"
+          [ "${#BRANCHES[@]}" -ge 1 ] || { echo "::error::no branches given"; exit 1; }
+
+          # Fetch each feature branch (they live on this same repo) into a local ref.
+          LOCALS=()
+          for i in "${!BRANCHES[@]}"; do
+            git fetch origin "${BRANCHES[$i]}:__b$i"
+            LOCALS+=("__b$i")
+          done
+
+          # Shared base = octopus merge-base of all branches.
+          BASE=$(git merge-base --octopus "${LOCALS[@]}")
+          echo "Shared merge-base: $(git log --oneline -1 "$BASE")"
+
+          # Merge each branch onto the base, in the given order.
+          COMBINED="ci/combined-${{ github.run_id }}"
+          git checkout -B "$COMBINED" "$BASE"
+          SUMMARY=""
+          for i in "${!BRANCHES[@]}"; do
+            n=$(git rev-list --count "$BASE..__b$i")
+            [ "$n" -le 20 ] || echo "::warning::${BRANCHES[$i]} is $n commits ahead of the shared base"
+            git merge --no-ff --no-edit "__b$i"
+            SUMMARY="${SUMMARY}- ${BRANCHES[$i]} @ $(git rev-parse --short "__b$i")"$'\n'
+          done
+          git push --force origin "HEAD:$COMBINED"
+
+          echo "combined_ref=$COMBINED" >> "$GITHUB_OUTPUT"
+          {
+            echo "summary<<EOF"
+            printf '%s' "$SUMMARY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Derive fork version + release tag
+        id: derive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Version base from the combined tree's CLI package.json (e.g. 0.22.3).
+          UPSTREAM=$(python3 -c "import json;print(json.load(open('apps/kimi-code/package.json'))['version'])")
+          BASE="${UPSTREAM}-csillag"
+          COMBINED_SHA=$(git rev-parse --short HEAD)
+
+          # N = highest existing fork-release counter + 1 (tags: v<base>.<N>.<sha>).
+          PREFIX="v${BASE}."
+          MAX=0
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            rest="${tag#"$PREFIX"}"
+            [ "$rest" = "$tag" ] && continue
+            n="${rest%%.*}"
+            case "$n" in ''|*[!0-9]*) continue ;; esac
+            [ "$n" -gt "$MAX" ] && MAX=$n
+          done < <(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName -q '.[].tagName' 2>/dev/null || true)
+          N=$((MAX + 1))
+
+          VERSION="${BASE}.${N}"
+          TAG="v${VERSION}.${COMBINED_SHA}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "Fork build: version=$VERSION tag=$TAG"
+
+  build:
+    needs: prep
+    uses: ./.github/workflows/_native-build.yml
+    with:
+      upload-artifact-prefix: kimi-code-native
+      retention-days: 7
+      sign-macos: false
+      version: ${{ needs.prep.outputs.version }}
+      ref: ${{ needs.prep.outputs.combined_ref }}
+
+  publish:
+    if: ${{ inputs.release }}
+    needs: [prep, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-native-*
+          merge-multiple: true
+          path: dist-native-release
+
+      - name: Produce manifest.json
+        env:
+          RELEASE_TAG: ${{ needs.prep.outputs.tag }}
+        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-native-release "$RELEASE_TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prep.outputs.tag }}
+          FORK_VERSION: ${{ needs.prep.outputs.version }}
+          COMBINED: ${{ needs.prep.outputs.summary }}
+        run: |
+          set -euo pipefail
+          printf 'Fork build of kimi-code combining these feature branches:\n\n%s\n`kimi --version` reports `%s`.\nAssets: per-target `kimi-code-<target>.zip` (+ `.sha256`) and `manifest.json`.\nInstall/upgrade with smart-install.sh.\n' \
+            "$COMBINED" "$FORK_VERSION" > /tmp/notes.md
+          gh release create "$RELEASE_TAG" dist-native-release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_TAG" \
+            --notes-file /tmp/notes.md
+
+  cleanup:
+    needs: [prep, build, publish]
+    if: always() && needs.prep.outputs.combined_ref != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the temporary combined branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/${{ needs.prep.outputs.combined_ref }}" || true
