@@ -624,6 +624,18 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   }));
   rawState.swarmModeBySession = { ...rawState.swarmModeBySession, [sessionId]: st.swarmMode };
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
+  // Sync the permission indicator from the session's server-side permission.
+  // `rawState.permission` is global (drives the on-screen indicator), seeded
+  // from localStorage and otherwise only written by an explicit user change —
+  // so without this it stays at its stale default (e.g. `manual`) while the
+  // session actually runs in `auto`/`yolo`. Guard on the active session so a
+  // background refresh doesn't clobber the on-screen value.
+  if (
+    sessionId === rawState.activeSessionId &&
+    (st.permission === 'manual' || st.permission === 'auto' || st.permission === 'yolo')
+  ) {
+    rawState.permission = st.permission;
+  }
 }
 
 /** Persist runtime controls to a session via POST /profile, then re-read
