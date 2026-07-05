@@ -74,6 +74,16 @@ const debugEnabled = isTraceEnabled();
 // unchanged. Falls back to desktop when matchMedia is unavailable.
 const isMobile = useIsMobile();
 
+// Embedded surface (iframe): `?embed=1` (or `?hideSidebar`) hard-hides the
+// workspace sidebar, its resize handle and the collapsed rail — and the mobile
+// top bar — leaving only the conversation pane. Read once: it never changes
+// without a reload.
+const embedMode = ((): boolean => {
+  if (typeof window === 'undefined') return false;
+  const q = new URLSearchParams(window.location.search);
+  return q.get('embed') === '1' || q.has('hideSidebar');
+})();
+
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);
 const showMobileSettings = ref(false);
@@ -622,11 +632,12 @@ function openPr(url: string): void {
     <div
       v-else
       class="app"
-      :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile }"
+      :class="{ mobile: isMobile, 'sidebar-collapsed': sidebarCollapsed && !isMobile, embed: embedMode && !isMobile }"
       :style="{ '--side-w': sideWidth + 'px', '--preview-w': previewPanelWidth + 'px' }"
     >
-    <!-- Desktop navigation: workspace rail + resizable session column. -->
-    <template v-if="!isMobile">
+    <!-- Desktop navigation: workspace rail + resizable session column.
+         Hidden entirely in embed mode (?embed=1) — see embedMode. -->
+    <template v-if="!isMobile && !embedMode">
       <Sidebar
         v-show="!sidebarCollapsed"
         :col-width="sideWidth"
@@ -677,7 +688,7 @@ function openPr(url: string): void {
 
     <!-- Mobile navigation: slim top bar (switcher + settings sheets). -->
     <MobileTopBar
-      v-else
+      v-if="isMobile && !embedMode"
       :workspace="client.visibleWorkspace.value"
       :session-title="activeSessionTitle"
       :running="running"
@@ -1114,6 +1125,17 @@ function openPr(url: string): void {
 /* The collapsed rail occupies track 1; keep the main pane pinned to the
    conversation track even though the sidebar/handle are display:none. */
 .app.sidebar-collapsed > .con {
+  grid-column: 3;
+}
+
+/* Embedded surface (?embed=1 / ?hideSidebar): the sidebar, its resize handle
+   and the collapsed rail are not rendered — zero the sidebar/handle tracks so
+   the conversation pane fills the width. `.con` (track 3) and `.global-preview`
+   (track 5) are already explicitly placed, so no auto-placement shifts. */
+.app.embed {
+  grid-template-columns: 0 0 minmax(0, 1fr) 0 auto;
+}
+.app.embed > .con {
   grid-column: 3;
 }
 
