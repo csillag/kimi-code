@@ -1,79 +1,155 @@
-# Repository-level Agent Guide
+# AGENTS.md — operator guide for the `csillag/kimi-code` fork
 
-Reply in the same language as the user.
+Runbook for **agents (Claude, scripted runs) and humans** maintaining this
+fork. It documents the one supported maintenance flow: periodically rebase the
+feature branches onto latest upstream, then trigger a binary build that
+**combines all feature branches**, versions them, and auto-publishes a GitHub
+Release.
 
-This is a TypeScript monorepo built for agent-assisted development. Keep the root `AGENTS.md` limited to hot-path rules: the project map, hard constraints, and workflow requirements — things every task needs to know.
+**New agent landing here: read this file end-to-end before changing anything.**
 
-## Working Principles
+> This runbook lives on the fork's **`main`** branch, which holds only build
+> infrastructure on top of upstream. Each feature branch keeps upstream's own
+> `AGENTS.md` (they must stay clean for upstream PRs). If a feature branch is
+> checked out, read this file via `git show main:AGENTS.md`.
 
-- Think from first principles. Start from real requirements, code facts, and verification results; if the goal is unclear, discuss it with the user first.
-- Treat code, not documentation, as the source of truth. Unless the user explicitly says otherwise, do not read ordinary Markdown just to understand the implementation.
-- Before making code changes, read the relevant code and the most recent constraints, and follow the nearest `AGENTS.md` in the directory tree.
-- Keep changes focused. Do not slip in unrelated refactors along the way.
-- When committing, do not add any co-author attribution, and do not reveal the identity of the agent in commit messages, PR descriptions, or any explanatory text.
+---
 
-## Project Map
+## Branches
 
-- `apps/kimi-code`: the CLI / TUI application. It consumes core capabilities through `@moonshot-ai/kimi-code-sdk` and must not depend directly on `@moonshot-ai/agent-core`. When writing or modifying its terminal UI, use the `write-tui` skill (`.agents/skills/write-tui/SKILL.md`).
-- `apps/kimi-web`: the browser web UI, a peer to the TUI. Vue 3 + Vite + vue-i18n; talks to the server over REST + WebSocket under `/api/v1`. It must not depend on `@moonshot-ai/agent-core` (wire types are re-implemented locally). See `apps/kimi-web/AGENTS.md`.
-- `apps/vis`, `apps/vis/server`, `apps/vis/web`: visual debugging tools for sessions and replays.
-- `packages/agent-core`: the unified agent engine, including Agent, Session, profile, skills, tools, plan, permission, background, records, the in-process DI service layer (`src/services/`), and other core capabilities.
-- `packages/node-sdk`: the public TypeScript SDK and harness.
-- `packages/kosong`: the LLM / provider abstraction layer.
-- `packages/kaos`: the execution environment and file/process abstractions.
-- `packages/oauth`: Kimi OAuth and managed auth utilities.
-- `packages/telemetry`: shared client-side telemetry infrastructure.
-- `packages/server`: the Kimi Code server. Hosts `agent-core` sessions and exposes them over REST + WebSocket (`/api/v1`); bootstrapped from `src/start.ts` and consumed by `apps/kimi-code`. See `packages/server/AGENTS.md`.
-- `packages/server-e2e`: live e2e tests and scenarios against a running server (`KIMI_SERVER_URL`, default `http://127.0.0.1:58627`). See `packages/server-e2e/AGENTS.md`.
+`main` is the **infra branch**: upstream `origin/main` + the build workflow,
+`smart-install.sh`, and this file. It builds nothing on its own tree — the build
+merges the feature branches at run time. It is the fork's **default branch** (so
+`workflow_dispatch` is available) and the host of the raw `smart-install.sh`.
 
-## Environment Requirements
+Feature branches (each based on upstream `origin/main`, each independently
+PR-able upstream, each carrying only its own change):
 
-- **Node.js**: `>=24.15.0` (from the root `package.json` `engines`; `.nvmrc` is `24.15.0`, used by nvm / fnm / mise to pick the minimum recommended version).
-- **pnpm**: `10.33.0` (from the root `package.json` `packageManager`).
-- `pnpm install` will fail when the Node version is not satisfied, because `.npmrc` sets `engine-strict=true`.
+| Branch | Upstream issue | Change |
+| --- | --- | --- |
+| `csillag/iframe` | #1387 | Embeddable web UI under a subpath: `vite base:'./'`, static `<base href="/">`, `document.baseURI` server base. |
+| `csillag/web-permission-display-fix` | #1386 | Sync the permission indicator from `/status` in `refreshSessionStatus`. |
+| `csillag/hide-sidebar` | (fork-only) | `?embed=1` query param hard-hides the sidebar + rail for iframe embedding. |
 
-## Monorepo Workspace Maintenance
+Keep every feature branch rebased onto the **same** upstream base so they share a
+clean merge-base (the build's octopus merge-base).
 
-- `pnpm-workspace.yaml` is the source of truth for workspace membership, but `flake.nix` also contains **hardcoded** `workspacePaths` and `workspaceNames` lists.
-- **Whenever you add or remove a workspace package, you MUST update both `pnpm-workspace.yaml` and `flake.nix` — for every package, including leaf / test / e2e packages that nothing depends on.**
-  - `pnpm-workspace.yaml` uses globs (`packages/*`, `apps/*`), so most packages land there automatically; `flake.nix` is fully manual and is where omissions happen.
-  - Missing a path in `flake.nix`'s `workspacePaths` will silently drop files from the Nix build's `src` fileset.
-  - Missing a name in `flake.nix`'s `workspaceNames` will break `pnpmConfigHook` because dependencies for that workspace will not be fetched.
-- The automated "Check flake.nix workspace sync" (`scripts/check-nix-workspace.mjs`) only validates the transitive dependency **closure of `@moonshot-ai/kimi-code`**. A leaf package outside that closure (e.g. an e2e package nobody imports) slips through even when it is missing from `flake.nix`. A green check is therefore NOT proof that `flake.nix` is fully in sync — keep it updated by hand on every add/remove, do not rely on the check to catch omissions.
+## Remotes (note: reversed from the usual convention)
 
-## General Coding Rules
+```
+origin   = https://github.com/MoonshotAI/kimi-code.git   # UPSTREAM
+csillag  = https://github.com/csillag/kimi-code.git      # THIS FORK
+```
 
-- For optional object properties, pass `undefined` directly instead of using conditional spread.
-  - YES: `{ user }`
-  - NO: `{ ...(user ? { user } : undefined) }`
-- Optional object properties do not need to additionally allow `undefined` in the type.
-  - YES: `interface Options { user?: User }`
-  - NO: `interface Options { user?: User | undefined }`
-- Internal methods with only a single parameter should not be turned into options objects just for stylistic uniformity.
-- Except for a package's `index.ts`, other `index.ts` files should prefer `export * from './module';`.
-- The `Agent` class in `packages/agent-core/src/agent` must be usable on its own. The constructor must not force the caller to create a `Session` instance, nor require an `agentId` or `session`. It may accept an optional `sessionId` as a request-config hint — for example mapped to the provider's `prompt_cache_key` — but the instance must not hold `sessionId`, and must not depend on the Session lifecycle, metadata, or parent/child relationship logic.
-- Do not add too many new test files. Prefer adding tests to the existing test file of the corresponding component or module.
-- When a test fails because of a user modification, default to fixing the test first; do not change the implementation to satisfy an old test unless the implementation truly has a bug.
-- Do not sacrifice code quality for external compatibility unless the user explicitly asks for it. Breaking changes go through changesets and a `major` bump, gated by the rule below.
+The build workflow runs **on the fork**, where the feature branches live.
 
-## Experimental Features
+---
 
-- Gate a not-yet-public feature behind an experimental flag. Add the flag to the registry at `packages/agent-core/src/flags/registry.ts`, then check it with `flags.enabled('my-feature')`. Flags are env-driven and default off: `KIMI_CODE_EXPERIMENTAL_<NAME>` toggles one, `KIMI_CODE_EXPERIMENTAL_FLAG` enables all. Release by flipping the entry's `default` to `true`.
+## Rebase → build → release cycle
 
-## Where to Update Instructions
+### 0. Sanity
 
-- Hard rules that affect almost every task: update the root `AGENTS.md`.
-- Rules that only affect a specific directory: update the nearest sub-directory `AGENTS.md`.
-- Keep instruction updates focused and supported by code facts.
+```sh
+cd ~/deai/kimi-code
+git status --short              # clean; else STOP and ask
+git remote -v                   # origin=MoonshotAI, csillag=csillag
+git fetch origin --prune        # upstream
+git fetch csillag --prune       # fork
+```
 
-## Workflow Requirements
+### 1. Rebase each feature branch onto upstream main
 
-- Prefer `rg` / `rg --files` when reading code.
-- When designing changes, follow existing boundaries and local patterns first.
-- In public text and test data, replace real internal identifiers with neutral placeholders such as `example.com`, `example.test`, and `YOUR_API_KEY`. Before opening a PR, ask a read-only agent to audit the diff for context-specific internal identifiers.
-- When creating a PR, the PR title must follow Conventional Commit style, e.g. `chore: remove legacy format commands`.
-- When an AI agent opens or updates a PR, fill in `.github/pull_request_template.md` — link the related issue or explain the problem, then describe what changed. Do not leave placeholder text or submit a generic summary of the diff.
-- Do not submit vague AI-generated PR text. The human author must understand the change well enough to explain the code, edge cases, and why the approach fits this repository.
-- After finishing a task and before submitting a PR, you must run the `gen-changesets` skill (see `.agents/skills/gen-changesets/SKILL.md`) and generate a changeset under `.changeset/` according to its rules.
-- When generating a changeset, **never** decide on a `major` bump on your own. When you judge a change to meet the major criteria (breaking changes, incompatible user configuration, renamed or removed commands/arguments, changed behavior semantics, etc.), you must stop and explain it to the user and ask for confirmation. **Only write `major` after the user has explicitly agreed.** Otherwise default to `minor` (and fall back to `patch` if `minor` is unclear). See the "Hard rule: confirm with the user before writing `major`" section in `.agents/skills/gen-changesets/SKILL.md` for details.
-- Prefer importing via `import ... from '#/...'`, which serves the same purpose as `import ... from '@/...'`.
+```sh
+for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar; do
+  git checkout "$b"
+  git rebase origin/main        # resolve conflicts (each branch touches few files)
+done
+# sanity: the web app still builds
+pnpm install
+pnpm --filter @moonshot-ai/kimi-web run typecheck
+pnpm --filter @moonshot-ai/kimi-web run build
+```
+
+### 2. Rebase the infra branch onto upstream main
+
+```sh
+git checkout main
+git rebase origin/main
+```
+
+Conflicts to expect (main overrides these files vs upstream):
+- **`AGENTS.md`** — keep OURS: `git checkout --ours AGENTS.md && git add AGENTS.md`
+- **`.github/workflows/_native-build.yml`** — we only ADD a `version` input, a
+  `ref` input, and the "Override CLI version" step, and set `ref:` on the
+  checkout. Re-apply those additions on top of upstream, then `git add`.
+  `build-fork.yml` and `smart-install.sh` are fork-only files and never conflict.
+
+### 3. Push everything to the fork
+
+```sh
+for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar main; do
+  git push --force-with-lease csillag "$b"
+done
+```
+
+`main` must remain the fork's **default branch** (for `workflow_dispatch`). One-time (already set):
+`gh api --method PATCH repos/csillag/kimi-code -f default_branch=main`
+GitHub **Actions must be enabled** (one-time, already done):
+`gh api --method PUT repos/csillag/kimi-code/actions/permissions -F enabled=true -f allowed_actions=all`
+
+### 4. Trigger the build
+
+```sh
+gh workflow run build-fork.yml --repo csillag/kimi-code --ref main
+```
+
+`build-fork.yml`:
+- **Combines** all feature branches (input `branches`, default = the three above)
+  onto their octopus merge-base into a temporary `ci/combined-<run_id>` branch,
+  pushes it, then reuses `_native-build.yml` against that ref.
+- **Version** `= <upstream>-csillag.<N>` (N = highest existing fork-release
+  counter + 1), baked in via the `version` input → `kimi --version`.
+- **Tag** `= v<version>.<combined-short-sha>` (one SHA — the combined tree tip;
+  the release notes list each feature branch and its SHA).
+- Auto-creates the GitHub Release and deletes the temp branch on cleanup. No
+  manual tagging. `-f release=false` builds artifacts without publishing.
+- Override branches: `-f branches="csillag/iframe csillag/web-permission-display-fix"`.
+
+### 5. Monitor
+
+```sh
+RID=$(gh run list --repo csillag/kimi-code --workflow build-fork.yml --limit 1 --json databaseId -q '.[0].databaseId')
+gh run watch "$RID" --repo csillag/kimi-code --exit-status
+```
+
+Unsigned 6-target matrix (linux x2, darwin x2, win32 x2). Windows builds but is
+unused by `smart-install.sh` (macOS/Linux only); a failed Windows leg does not
+block the release (`fail-fast: false`).
+
+### 6. Verify
+
+```sh
+gh release view --repo csillag/kimi-code --json tagName,assets -q '.tagName, (.assets[].name)'
+./smart-install.sh --resolve    # what optio calls: JSON with url + sha256
+```
+
+---
+
+## How consumers use the binaries
+
+- **Install / upgrade (linux/macOS):**
+  `curl -fsSL https://raw.githubusercontent.com/csillag/kimi-code/main/smart-install.sh | bash`
+- **optio:** calls `smart-install.sh --check` (prints `kimi ok` / `download <url>`);
+  downloads `<url>` with its own tooling and unzips the `kimi` binary (zip root).
+- **Disable kimi's in-app auto-update** (optio upgrades before each session):
+  set `KIMI_CODE_NO_AUTO_UPDATE=1` in kimi's launch env.
+
+## Invariants — do not break
+
+- Keep the tag↔version transform identical in `build-fork.yml` (tag build) and
+  `smart-install.sh` (`sed 's/^v//; s/\.[0-9a-f]+$//'`). It strips the single
+  trailing `.<combined-sha>` to recover the binary version from the release tag.
+- Every feature branch stays free of fork-only infra (for its upstream PR) and
+  carries no agent/co-author attribution in commits (upstream `AGENTS.md` rule).
+- The `_native-build.yml` `version`/`ref` inputs are no-ops when empty, so
+  upstream's own callers of that reusable workflow are unaffected.
