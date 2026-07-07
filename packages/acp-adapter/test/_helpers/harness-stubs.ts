@@ -34,6 +34,15 @@ export function makeModelsMap(
     name?: string;
     thinkingSupported?: boolean;
     alwaysThinking?: boolean;
+    /**
+     * Declared graded reasoning levels for the model. When present the
+     * adapter advertises them (plus `off`, unless always-thinking) as the
+     * `thinking` config option, and accepts any of them over
+     * `session/set_config_option`.
+     */
+    supportEfforts?: readonly string[];
+    /** Declared default effort; falls back to the middle of `supportEfforts`. */
+    defaultEffort?: string;
   }>,
 ): Record<string, ModelAlias> {
   const out: Record<string, ModelAlias> = {};
@@ -51,6 +60,8 @@ export function makeModelsMap(
       model: entry.id,
       ...(entry.name !== undefined ? { displayName: entry.name } : {}),
       ...(capabilities !== undefined ? { capabilities } : {}),
+      ...(entry.supportEfforts !== undefined ? { supportEfforts: entry.supportEfforts } : {}),
+      ...(entry.defaultEffort !== undefined ? { defaultEffort: entry.defaultEffort } : {}),
     } as ModelAlias;
   }
   return out;

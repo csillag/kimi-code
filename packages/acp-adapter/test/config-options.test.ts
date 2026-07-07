@@ -11,18 +11,36 @@ import {
 import type { AcpModelEntry } from '../src/model-catalog';
 
 function makeHarnessWithModels(
-  entries: ReadonlyArray<{ id: string; model?: string; displayName?: string; capabilities?: readonly string[] }>,
+  entries: ReadonlyArray<{
+    id: string;
+    model?: string;
+    displayName?: string;
+    capabilities?: readonly string[];
+    supportEfforts?: readonly string[];
+    defaultEffort?: string;
+  }>,
 ): { harness: KimiHarness; getConfig: ReturnType<typeof vi.fn> } {
   // Mirror the `listAvailableModels` derivation: `id` is the config map
   // key, `model` defaults to id, `displayName` to model. The test fixtures
   // below pick names that exercise the three thinkingSupported triggers
   // (name regex, capabilities array, toggleable allow-list).
-  const models: Record<string, { model: string; displayName?: string; capabilities?: readonly string[] }> = {};
+  const models: Record<
+    string,
+    {
+      model: string;
+      displayName?: string;
+      capabilities?: readonly string[];
+      supportEfforts?: readonly string[];
+      defaultEffort?: string;
+    }
+  > = {};
   for (const entry of entries) {
     models[entry.id] = {
       model: entry.model ?? entry.id,
       ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
+      ...(entry.supportEfforts !== undefined ? { supportEfforts: entry.supportEfforts } : {}),
+      ...(entry.defaultEffort !== undefined ? { defaultEffort: entry.defaultEffort } : {}),
     };
   }
   const getConfig = vi.fn(async () => ({ models }));
@@ -79,8 +97,8 @@ describe('buildModelOption', () => {
 });
 
 describe('buildThinkingOption', () => {
-  it('produces a `type:"select"` `category:"thought_level"` option with `off`/`on` entries carrying the toggle value', () => {
-    const on = buildThinkingOption(true);
+  it('produces a `type:"select"` `category:"thought_level"` option with `off`/`on` entries carrying the toggle value (boolean model, no graded levels)', () => {
+    const on = buildThinkingOption('on');
     expect(on.type).toBe('select');
     expect(on.id).toBe('thinking');
     expect(on.category).toBe('thought_level');
@@ -90,17 +108,49 @@ describe('buildThinkingOption', () => {
     expect(on.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['off', 'on']);
     expect(on.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking Off', 'Thinking On']);
 
-    const off = buildThinkingOption(false);
+    const off = buildThinkingOption('off');
     if (off.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(off.currentValue).toBe('off');
   });
 
-  it('collapses to a single locked "on" entry for always-thinking models', () => {
-    const locked = buildThinkingOption(true, true);
+  it('collapses to a single locked "on" entry for always-thinking models (no graded levels)', () => {
+    const locked = buildThinkingOption('on', true);
     if (locked.type !== 'select') throw new Error('expected SessionConfigSelect');
     expect(locked.currentValue).toBe('on');
     expect(locked.options.map((o) => ('value' in o ? o.value : ''))).toEqual(['on']);
     expect(locked.options.map((o) => ('name' in o ? o.name : ''))).toEqual(['Thinking On']);
+  });
+
+  it('advertises `off` + the model graded levels when the model declares support_efforts', () => {
+    const graded = buildThinkingOption('high', false, ['low', 'medium', 'high', 'xhigh', 'max']);
+    if (graded.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(graded.currentValue).toBe('high');
+    expect(graded.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+    // Every advertised grade carries a human name.
+    for (const entry of graded.options) {
+      if ('value' in entry) {
+        expect(typeof entry.name).toBe('string');
+        expect(entry.name.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('omits the `off` level for always-thinking graded models (runtime cannot honor off)', () => {
+    const graded = buildThinkingOption('medium', true, ['low', 'medium', 'high']);
+    if (graded.type !== 'select') throw new Error('expected SessionConfigSelect');
+    expect(graded.currentValue).toBe('medium');
+    expect(graded.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'low',
+      'medium',
+      'high',
+    ]);
   });
 });
 
@@ -137,7 +187,7 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'off', 'default');
 
     expect(getConfig).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(3);
@@ -163,20 +213,66 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-plain', model: 'qwen-2.5-coder', displayName: 'Kimi Plain' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-plain', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-plain', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
 
-  it('reflects the thinking toggle currentValue from the explicit argument', async () => {
+  it('reflects the thinking toggle currentValue from the explicit effort argument', async () => {
     const { harness } = makeHarnessWithModels([
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-coder', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-coder', 'on', 'default');
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
     expect(toggle.currentValue).toBe('on');
+  });
+
+  it('advertises graded levels and reflects a graded currentValue for a support_efforts model', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'kimi-graded',
+        model: 'kimi-graded',
+        displayName: 'Kimi Graded',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        defaultEffort: 'medium',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'kimi-graded', 'high', 'default');
+    const toggle = result.find((o) => o.id === 'thinking');
+    if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
+    expect(toggle.currentValue).toBe('high');
+    expect(toggle.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+  });
+
+  it('normalizes a bare "on" to the model default grade for a support_efforts model', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'kimi-graded',
+        model: 'kimi-graded',
+        displayName: 'Kimi Graded',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'medium',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'kimi-graded', 'on', 'default');
+    const toggle = result.find((o) => o.id === 'thinking');
+    if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
+    // "on" is not a grade — it resolves to the declared default so the
+    // advertised currentValue is always one of the listed options.
+    expect(toggle.currentValue).toBe('medium');
   });
 
   it('locks the thinking toggle to on for always-thinking models even when the session state says off', async () => {
@@ -189,7 +285,7 @@ describe('buildSessionConfigOptions', () => {
       },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'kimi-deep', false, 'default');
+    const result = await buildSessionConfigOptions(harness, 'kimi-deep', 'off', 'default');
 
     const toggle = result.find((o) => o.id === 'thinking');
     if (!toggle || toggle.type !== 'select') throw new Error('expected thinking select toggle');
@@ -202,14 +298,14 @@ describe('buildSessionConfigOptions', () => {
       { id: 'kimi-coder', model: 'kimi-for-coding', displayName: 'Kimi Coder' },
     ]);
 
-    const result = await buildSessionConfigOptions(harness, 'unknown-model', true, 'default');
+    const result = await buildSessionConfigOptions(harness, 'unknown-model', 'on', 'default');
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
   });
 
   it('handles missing getConfig (partial-stub harness) by suppressing the toggle and shipping an empty model picker', async () => {
     const harness = {} as unknown as KimiHarness;
 
-    const result = await buildSessionConfigOptions(harness, '', false, 'default');
+    const result = await buildSessionConfigOptions(harness, '', 'off', 'default');
 
     expect(result.map((o) => o.id)).toEqual(['model', 'mode']);
     const modelOpt = result.find((o) => o.id === 'model');

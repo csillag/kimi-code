@@ -45,6 +45,15 @@ export interface AcpModelEntry {
    * `defaultThinkingEffortFor` so the ACP on-state matches the TUI.
    */
   readonly defaultThinkingEffort: string;
+  /**
+   * The model's declared ordered graded reasoning levels (`support_efforts`),
+   * e.g. `['low', 'medium', 'high', 'xhigh', 'max']`. Present only for models
+   * that expose graded effort; `undefined` for boolean thinking models. When
+   * present the ACP `thinking` option advertises these grades (plus `off`,
+   * unless the model is always-thinking) and accepts any of them live over
+   * `session/set_config_option`, matching the REST / web surface.
+   */
+  readonly supportedEfforts?: readonly string[];
 }
 
 /**
@@ -113,12 +122,15 @@ export async function listModelsFromHarness(
   const out: AcpModelEntry[] = [];
   for (const [id, alias] of Object.entries(models)) {
     const effective = effectiveModelAlias(alias);
+    const supportEfforts = effective.supportEfforts;
     out.push({
       id,
       name: effective.displayName ?? effective.model ?? id,
       thinkingSupported: deriveThinkingSupported(alias),
       alwaysThinking: deriveAlwaysThinking(alias),
       defaultThinkingEffort: deriveDefaultThinkingEffort(alias),
+      supportedEfforts:
+        supportEfforts !== undefined && supportEfforts.length > 0 ? supportEfforts : undefined,
     });
   }
   return out;

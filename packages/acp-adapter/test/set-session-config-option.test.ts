@@ -264,6 +264,102 @@ describe('AcpServer session/set_config_option', () => {
     expect(updates).toHaveLength(1);
   });
 
+  function makeGradedHarness(handle: FakeSessionHandle): KimiHarness {
+    return {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => handle.session,
+      getConfig: async () => ({
+        providers: {},
+        defaultModel: 'kimi-graded',
+        models: makeModelsMap([
+          {
+            id: 'kimi-graded',
+            name: 'Kimi Graded',
+            thinkingSupported: true,
+            supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+            defaultEffort: 'medium',
+          },
+        ]),
+      }),
+    } as unknown as KimiHarness;
+  }
+
+  it('configId="thinking" + a graded level → setThinking(<grade>) + snapshot currentValue=<grade> with graded options', async () => {
+    const handle = makeFakeSession('sess-thinking-graded');
+    const harness = makeGradedHarness(handle);
+    const { client, sessionId } = await openSession(harness);
+
+    const response = await client.setSessionConfigOption({
+      sessionId,
+      configId: 'thinking',
+      value: 'high',
+    });
+
+    expect(handle.setThinkingCalls).toEqual(['high']);
+    const respToggle = response.configOptions.find((o) => o.id === 'thinking');
+    if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
+    expect(respToggle.currentValue).toBe('high');
+    expect(respToggle.options.map((o) => ('value' in o ? o.value : ''))).toEqual([
+      'off',
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+    ]);
+  });
+
+  it('configId="thinking" + "on" on a graded model → setThinking(<model default grade>) + currentValue=<default>', async () => {
+    const handle = makeFakeSession('sess-thinking-graded-on');
+    const harness = makeGradedHarness(handle);
+    const { client, sessionId } = await openSession(harness);
+
+    const response = await client.setSessionConfigOption({
+      sessionId,
+      configId: 'thinking',
+      value: 'on',
+    });
+
+    expect(handle.setThinkingCalls).toEqual(['medium']);
+    const respToggle = response.configOptions.find((o) => o.id === 'thinking');
+    if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
+    expect(respToggle.currentValue).toBe('medium');
+  });
+
+  it('configId="thinking" + "off" on a graded model → setThinking("off") + currentValue="off"', async () => {
+    const handle = makeFakeSession('sess-thinking-graded-off');
+    const harness = makeGradedHarness(handle);
+    const { client, sessionId } = await openSession(harness);
+
+    const response = await client.setSessionConfigOption({
+      sessionId,
+      configId: 'thinking',
+      value: 'off',
+    });
+
+    expect(handle.setThinkingCalls).toEqual(['off']);
+    const respToggle = response.configOptions.find((o) => o.id === 'thinking');
+    if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
+    expect(respToggle.currentValue).toBe('off');
+  });
+
+  it('configId="thinking" + an unadvertised value → safe disable (setThinking("off")) rather than forwarding a bad effort', async () => {
+    const handle = makeFakeSession('sess-thinking-graded-bogus');
+    const harness = makeGradedHarness(handle);
+    const { client, sessionId } = await openSession(harness);
+
+    const response = await client.setSessionConfigOption({
+      sessionId,
+      configId: 'thinking',
+      value: 'ludicrous',
+    });
+
+    expect(handle.setThinkingCalls).toEqual(['off']);
+    const respToggle = response.configOptions.find((o) => o.id === 'thinking');
+    if (!respToggle || respToggle.type !== 'select') throw new Error('expected select toggle');
+    expect(respToggle.currentValue).toBe('off');
+  });
+
   const MODE_CASES: ReadonlyArray<{
     modeId: 'default' | 'plan' | 'auto' | 'yolo';
     expectedPlan: boolean;

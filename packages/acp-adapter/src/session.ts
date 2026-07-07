@@ -109,23 +109,25 @@ export class AcpSession {
   private currentModelIdInternal: string;
 
   /**
-   * The adapter-side authoritative current thinking-toggle state.
-   * Phase 15 split this out of the model id so the client renders a
-   * separate boolean `SessionConfigOption` (the spec's
-   * `'thought_level'` category) instead of an inlined `,thinking`
-   * variant row in the model dropdown. Updated by {@link setThinking}
-   * and by {@link setModel} when the caller passed a merged
-   * `${id},thinking` form (legacy `unstable_setSessionModel`
-   * compatibility).
+   * The adapter-side authoritative current thinking effort — the actual
+   * effort string last applied to the SDK session (`'off'`, `'on'` for
+   * boolean models, or a graded level `'low' | 'medium' | 'high' |
+   * 'xhigh' | 'max'` for models declaring `support_efforts`).
    *
-   * Maps to the SDK's effort string at the boundary:
-   * `true` → `'high'` (the typical default for kimi-code), `false`
-   * → `'off'`. The granularity of `'low' | 'medium' | 'xhigh' | 'max'`
-   * is intentionally not surfaced — the ACP `thinking` axis is binary
-   * (Phase 16 wire form: 2-entry `select` `off` / `on`; pre-Phase-16
-   * was `SessionConfigBoolean`).
+   * Phase 15 split thinking out of the model id so the client renders a
+   * separate `thought_level` `SessionConfigOption` instead of an inlined
+   * `,thinking` variant row. This field originally tracked only a boolean
+   * on/off; it now holds the graded effort so an ACP client can set and
+   * round-trip a chosen reasoning grade live over
+   * `session/set_config_option` — matching the REST / web surface. The
+   * boolean {@link currentThinkingEnabled} view (`effort !== 'off'`) is
+   * derived for callers that only care about on/off.
+   *
+   * Updated by {@link setThinkingEffort} (and {@link setThinking}, which
+   * delegates to it) and by {@link setModel} when the caller passed a
+   * merged `${id},thinking` form.
    */
-  private currentThinkingEnabledInternal = false;
+  private currentThinkingEffortInternal = 'off';
 
   /**
    * The adapter-side authoritative current mode id. Updated by
@@ -214,7 +216,10 @@ export class AcpSession {
     initialThinkingEnabled?: boolean,
   ) {
     this.currentModelIdInternal = initialModelId ?? '';
-    this.currentThinkingEnabledInternal = initialThinkingEnabled ?? false;
+    // The server seeds a boolean; a resumed session whose persisted effort
+    // was graded still starts as `'on'` here and is normalized to the
+    // model's default grade when the first snapshot is built.
+    this.currentThinkingEffortInternal = initialThinkingEnabled === true ? 'on' : 'off';
     // Register the approval bridge once, at session-construction time —
     // NOT per-prompt — because `setApprovalHandler` is scoped to the
     // SDK session, not the individual turn. The handler captures `this`
@@ -253,12 +258,21 @@ export class AcpSession {
   }
 
   /**
-   * Adapter-side authoritative thinking-toggle state, used by
-   * {@link AcpServer.setSessionConfigOption} to build the response's
-   * `configOptions` snapshot.
+   * Adapter-side authoritative thinking-toggle state (boolean view),
+   * derived as `effort !== 'off'`. Kept for callers that only care about
+   * on/off.
    */
   get currentThinkingEnabled(): boolean {
-    return this.currentThinkingEnabledInternal;
+    return this.currentThinkingEffortInternal !== 'off';
+  }
+
+  /**
+   * Adapter-side authoritative current thinking effort (the graded value),
+   * used by {@link AcpServer.setSessionConfigOption} to build the response's
+   * `configOptions` snapshot.
+   */
+  get currentThinkingEffort(): string {
+    return this.currentThinkingEffortInternal;
   }
 
   /**
@@ -350,41 +364,79 @@ export class AcpSession {
     const hasSuffix = modelId.endsWith(suffix);
     const baseKey = hasSuffix ? modelId.slice(0, -suffix.length) : modelId;
     await this.session.setModel(baseKey);
-    if (hasSuffix && typeof this.session.setThinking === 'function') {
-      await this.session.setThinking(await this.thinkingOnEffort());
-      this.currentThinkingEnabledInternal = true;
-    }
     this.currentModelIdInternal = baseKey;
+    if (hasSuffix && typeof this.session.setThinking === 'function') {
+      const effort = await this.thinkingOnEffort();
+      await this.session.setThinking(effort);
+      this.currentThinkingEffortInternal = effort;
+    }
     await this.emitConfigOptionUpdate();
   }
 
   /**
-   * Forward an ACP thinking-toggle change to the underlying SDK.
-   *
-   * Phase 15 introduces this as the new canonical channel for the
-   * thinking axis. Boolean → thinking-effort mapping:
-   *  - `true`  → `Session.setThinking(effort)` where `effort` is the
-   *    current model's default effort (see {@link thinkingOnEffort}).
-   *  - `false` → `Session.setThinking('off')`.
-   *
-   * Tolerant to partial-stub `Session` instances (adapter-level unit
-   * tests construct minimal fakes that may omit `setThinking`): when
-   * the method is missing we still update the adapter-side toggle
-   * state and emit the snapshot, so the ACP wire stays consistent —
-   * the test simply doesn't observe an SDK call.
-   *
-   * Always emits a `config_option_update` notification afterwards so
-   * the client sees the toggle reflect the new value, even if it
-   * came in through the funnel and the response itself already
-   * carries a fresh snapshot.
+   * Forward an ACP thinking-toggle change to the underlying SDK (boolean
+   * convenience over {@link setThinkingEffort}):
+   *  - `true`  → the current model's default effort (see {@link thinkingOnEffort});
+   *  - `false` → `'off'`.
    */
   async setThinking(enabled: boolean): Promise<void> {
+    await this.setThinkingEffort(enabled ? 'on' : 'off');
+  }
+
+  /**
+   * Forward a graded ACP thinking-effort change to the underlying SDK.
+   *
+   * This is the canonical channel for the thinking axis; it accepts the
+   * raw value from `session/set_config_option` and maps it to a real
+   * effort string the SDK / agent-core runtime understands, live and
+   * mid-session (no restart, no config-file write) — matching the REST
+   * and web surface:
+   *  - `'off'` → disable (`Session.setThinking('off')`);
+   *  - `'on'`  → the current model's default effort (boolean-model / Zed
+   *    compatibility — see {@link thinkingOnEffort});
+   *  - a level the current model declares in `support_efforts`
+   *    (`'low' | 'medium' | 'high' | 'xhigh' | 'max'`) → that level;
+   *  - anything else (an unadvertised / stale value) → safe disable
+   *    (`'off'`) rather than forwarding an effort the model can't accept.
+   *    This preserves the pre-graded footgun-guard: a non-`'on'` string
+   *    never silently flips thinking on via truthiness.
+   *
+   * The `always_thinking` clamp is enforced downstream by agent-core's
+   * `resolveThinkingEffort`; the adapter forwards `'off'` faithfully and
+   * the snapshot renders locked-on.
+   *
+   * Tolerant to partial-stub `Session` instances (adapter-level unit
+   * tests construct minimal fakes that may omit `setThinking`): when the
+   * method is missing we still update the adapter-side state and emit the
+   * snapshot. Always emits a `config_option_update` notification afterwards.
+   */
+  async setThinkingEffort(raw: string): Promise<void> {
+    let effort: string;
+    if (raw === THINKING_OFF_EFFORT) {
+      effort = THINKING_OFF_EFFORT;
+    } else if (raw === 'on') {
+      effort = await this.thinkingOnEffort();
+    } else {
+      const supported = await this.supportedEffortsForCurrentModel();
+      effort = supported.includes(raw) ? raw : THINKING_OFF_EFFORT;
+    }
     if (typeof this.session.setThinking === 'function') {
-      const effort = enabled ? await this.thinkingOnEffort() : THINKING_OFF_EFFORT;
       await this.session.setThinking(effort);
     }
-    this.currentThinkingEnabledInternal = enabled;
+    this.currentThinkingEffortInternal = effort;
     await this.emitConfigOptionUpdate();
+  }
+
+  /**
+   * The current model's declared graded reasoning levels (`support_efforts`),
+   * or an empty array for boolean-thinking models / when the catalog is
+   * unavailable (harness-less unit tests). Used to validate a graded
+   * `set_config_option` value before forwarding it to the SDK.
+   */
+  private async supportedEffortsForCurrentModel(): Promise<readonly string[]> {
+    if (!this.harness) return [];
+    const models = await listModelsFromHarness(this.harness);
+    return models.find((m) => m.id === this.currentModelIdInternal)?.supportedEfforts ?? [];
   }
 
   /**
@@ -472,7 +524,7 @@ export class AcpSession {
       const snapshot = await buildSessionConfigOptions(
         this.harness,
         this.currentModelIdInternal,
-        this.currentThinkingEnabledInternal,
+        this.currentThinkingEffortInternal,
         this.currentModeIdInternal,
       );
       await this.conn.sessionUpdate(configOptionUpdateNotification(this.id, snapshot));

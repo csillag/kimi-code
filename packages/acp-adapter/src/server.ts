@@ -321,7 +321,7 @@ export class AcpServer implements Agent {
     const configOptions = await buildSessionConfigOptions(
       this.harness,
       currentModelId,
-      currentThinkingEnabled,
+      acpSession.currentThinkingEffort,
       DEFAULT_MODE_ID,
     );
     this.scheduleAvailableCommandsUpdate(session.id);
@@ -513,7 +513,7 @@ export class AcpServer implements Agent {
     const configOptions = await buildSessionConfigOptions(
       this.harness,
       currentModelId,
-      currentThinkingEnabled,
+      acpSession.currentThinkingEffort,
       DEFAULT_MODE_ID,
     );
     return { session, acpSession, configOptions };
@@ -683,13 +683,15 @@ export class AcpServer implements Agent {
         await acpSession.setMode(String(value));
         break;
       case 'thinking': {
-        // Phase 16 changed the wire shape from boolean to a 2-entry
-        // `select` (`'on'` / `'off'`) for Zed UI compatibility. Strict
-        // equality with `'on'` keeps the parse deterministic — any
-        // other string (including a stale `true` / `false` boolean
-        // sent by a pre-Phase-16 client) reads as "off" rather than
-        // silently flipping based on truthiness.
-        await acpSession.setThinking(value === 'on');
+        // Route the raw value to the graded setter: `'off'` disables,
+        // `'on'` selects the model default (Zed / boolean-model
+        // compatibility), and any level the model declares in
+        // `support_efforts` (`'low' | 'medium' | …`) is applied live —
+        // matching the REST / web surface. An unadvertised value is
+        // clamped to `'off'` inside {@link AcpSession.setThinkingEffort},
+        // preserving the pre-graded footgun-guard (a non-`'on'` string
+        // never flips thinking on by truthiness).
+        await acpSession.setThinkingEffort(String(value));
         break;
       }
       default:
@@ -702,7 +704,7 @@ export class AcpServer implements Agent {
       configOptions: await buildSessionConfigOptions(
         this.harness,
         acpSession.currentModelId,
-        acpSession.currentThinkingEnabled,
+        acpSession.currentThinkingEffort,
         acpSession.currentModeId,
       ),
     };

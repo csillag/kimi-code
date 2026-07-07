@@ -78,58 +78,103 @@ export function buildModelOption(
   };
 }
 
+/** Human labels for the advertised thinking levels. */
+const THINKING_LEVEL_LABELS: Record<string, string> = {
+  off: 'Thinking Off',
+  on: 'Thinking On',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
+};
+
+function thinkingLevelLabel(value: string): string {
+  return THINKING_LEVEL_LABELS[value] ?? value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 /**
- * Build the `thinking` toggle.
+ * Build the `thinking` option.
  *
  * Spec category `'thought_level'` (`schema/types.gen.d.ts:4492`) is the
  * reserved bucket for reasoning / thinking knobs; using it lets a client
- * like Zed render the toggle with the right icon / placement without the
+ * like Zed render the option with the right icon / placement without the
  * adapter advertising a custom category.
  *
- * Phase 16 made this a 2-entry `type: 'select'` (`off` / `on`) instead
- * of `type: 'boolean'` — Zed's chip strip currently only renders
- * `select` options; boolean shows as "Unknown" because the UI hasn't
- * been wired up to the spec's boolean arm yet. The adapter still tracks
- * the toggle internally as a boolean (`AcpSession.currentThinkingEnabled`);
- * only the wire encoding is `'on'` / `'off'` strings.
+ * Two shapes, chosen by whether the current model declares graded
+ * reasoning levels (`support_efforts`):
  *
- * The caller decides whether to include this option at all — when the
- * currently-selected model has `thinkingSupported === false`, the
- * snapshot omits it entirely (dynamic visibility), so the client never
- * shows a toggle that wouldn't do anything.
+ *  - **Graded model** (`supportedEfforts` non-empty): advertise `off`
+ *    plus each declared level (`low` / `medium` / `high` / …) so an ACP
+ *    client can render a reasoning-effort slider and round-trip a chosen
+ *    grade live over `session/set_config_option`, matching the REST / web
+ *    surface. `always_thinking` models drop the `off` level (the runtime
+ *    clamps `off` back to a real effort — see agent-core `resolveThinkingEffort`),
+ *    so offering it would be a lie.
+ *  - **Boolean model** (no `support_efforts`): the historical 2-entry
+ *    `off` / `on` select — `on` maps to the model's default effort under
+ *    the hood. Kept verbatim so pre-graded Zed clients are unaffected.
+ *    `always_thinking` collapses this to a single locked `on` entry.
  *
- * `alwaysThinking` models (declared `always_thinking` capability — the
- * runtime cannot disable thinking) collapse the select to a single
- * locked `on` entry: the state stays visible to the client, but there
- * is no off option to pick. ACP has no "disabled entry" concept, so
- * omitting `off` is the wire-level equivalent of the TUI's greyed-out
- * `Off (Unsupported)` segment.
+ * Phase 16 introduced the 2-entry `select` form (over `type: 'boolean'`)
+ * because Zed's chip strip only renders `select` options; the graded form
+ * reuses the same `select` encoding, just with more entries.
+ *
+ * `currentEffort` is expected to already be one of the advertised values
+ * (the caller normalizes via {@link buildSessionConfigOptions}); it is
+ * echoed as `currentValue`. The caller also decides whether to include
+ * this option at all — when the current model has
+ * `thinkingSupported === false` the snapshot omits it entirely.
  */
 export function buildThinkingOption(
-  enabled: boolean,
+  currentEffort: string,
   alwaysThinking = false,
+  supportedEfforts?: readonly string[],
 ): SessionConfigOption {
+  const base = {
+    type: 'select' as const,
+    id: 'thinking' as const,
+    name: 'Thinking',
+    category: 'thought_level' as const,
+  };
+  if (supportedEfforts !== undefined && supportedEfforts.length > 0) {
+    const levels = alwaysThinking ? [...supportedEfforts] : ['off', ...supportedEfforts];
+    return {
+      ...base,
+      currentValue: currentEffort,
+      options: levels.map((value) => ({ value, name: thinkingLevelLabel(value) })),
+    };
+  }
   if (alwaysThinking) {
     return {
-      type: 'select',
-      id: 'thinking',
-      name: 'Thinking',
-      category: 'thought_level',
+      ...base,
       currentValue: 'on',
       options: [{ value: 'on', name: 'Thinking On' }],
     };
   }
   return {
-    type: 'select',
-    id: 'thinking',
-    name: 'Thinking',
-    category: 'thought_level',
-    currentValue: enabled ? 'on' : 'off',
+    ...base,
+    currentValue: currentEffort !== 'off' ? 'on' : 'off',
     options: [
       { value: 'off', name: 'Thinking Off' },
       { value: 'on', name: 'Thinking On' },
     ],
   };
+}
+
+/**
+ * Clamp a stored thinking effort to a value the current model can actually
+ * advertise, so the snapshot's `currentValue` is always one of the listed
+ * options:
+ *  - boolean models: pass through (buildThinkingOption maps to `on` / `off`);
+ *  - graded models: keep `off` (unless always-thinking) and any declared
+ *    grade; map `'on'` / unknown / a disallowed `off` to the model default.
+ */
+function normalizeThinkingEffort(effort: string, entry: AcpModelEntry): string {
+  const supported = entry.supportedEfforts;
+  if (supported === undefined || supported.length === 0) return effort;
+  const valid = entry.alwaysThinking === true ? supported : ['off', ...supported];
+  return valid.includes(effort) ? effort : entry.defaultThinkingEffort;
 }
 
 /**
@@ -186,7 +231,7 @@ export function buildModeOption(currentModeId: AcpModeId): SessionConfigOption {
 export async function buildSessionConfigOptions(
   harness: KimiHarness,
   currentBaseModelId: string,
-  currentThinkingEnabled: boolean,
+  currentThinkingEffort: string,
   currentModeId: AcpModeId,
 ): Promise<SessionConfigOption[]> {
   const models = await listModelsFromHarness(harness);
@@ -194,10 +239,13 @@ export async function buildSessionConfigOptions(
   const showThinking = currentModelEntry?.thinkingSupported === true;
   const alwaysThinking = currentModelEntry?.alwaysThinking === true;
   const out: SessionConfigOption[] = [buildModelOption(models, currentBaseModelId)];
-  if (showThinking) {
-    // Always-thinking models render locked-on regardless of the session's
-    // recorded toggle state — agent-core clamps the runtime the same way.
-    out.push(buildThinkingOption(alwaysThinking || currentThinkingEnabled, alwaysThinking));
+  if (showThinking && currentModelEntry !== undefined) {
+    // Normalize the stored effort against the current model so the
+    // advertised `currentValue` is always one of the option values —
+    // always-thinking models clamp `off` back to a real effort here,
+    // matching agent-core's runtime `resolveThinkingEffort`.
+    const effort = normalizeThinkingEffort(currentThinkingEffort, currentModelEntry);
+    out.push(buildThinkingOption(effort, alwaysThinking, currentModelEntry.supportedEfforts));
   }
   out.push(buildModeOption(currentModeId));
   return out;
