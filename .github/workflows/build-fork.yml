@@ -28,6 +28,7 @@ on:
           csillag/iframe
           csillag/web-permission-display-fix
           csillag/hide-sidebar
+          csillag/acp-graded-thinking
       release:
         description: 'Publish a GitHub Release (false = build + upload artifacts only)'
         required: false

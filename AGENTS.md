@@ -30,6 +30,7 @@ PR-able upstream, each carrying only its own change):
 | `csillag/iframe` | #1387 | Embeddable web UI under a subpath: `vite base:'./'`, static `<base href="/">`, `document.baseURI` server base. |
 | `csillag/web-permission-display-fix` | #1386 | Sync the permission indicator from `/status` in `refreshSessionStatus`. |
 | `csillag/hide-sidebar` | (fork-only) | `?embed=1` query param hard-hides the sidebar + rail for iframe embedding. |
+| `csillag/acp-graded-thinking` | (issue TBD) | ACP `session/set_config_option` accepts + advertises graded reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`) live, not just on/off. Touches `packages/acp-adapter` only. |
 
 Keep every feature branch rebased onto the **same** upstream base so they share a
 clean merge-base (the build's octopus merge-base).
@@ -60,7 +61,7 @@ git fetch csillag --prune       # fork
 ### 1. Rebase each feature branch onto upstream main
 
 ```sh
-for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar; do
+for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar csillag/acp-graded-thinking; do
   git checkout "$b"
   git rebase origin/main        # resolve conflicts (each branch touches few files)
 done
@@ -90,7 +91,7 @@ Conflicts to expect (main overrides these files vs upstream):
 ### 3. Push everything to the fork
 
 ```sh
-for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar main; do
+for b in csillag/iframe csillag/web-permission-display-fix csillag/hide-sidebar csillag/acp-graded-thinking main; do
   git push --force-with-lease csillag "$b"
 done
 ```
@@ -107,7 +108,7 @@ gh workflow run build-fork.yml --repo csillag/kimi-code --ref main
 ```
 
 `build-fork.yml`:
-- **Combines** all feature branches (input `branches`, default = the three above)
+- **Combines** all feature branches (input `branches`, default = the four above)
   onto their octopus merge-base into a temporary `ci/combined-<run_id>` branch,
   pushes it, then reuses `_native-build.yml` against that ref.
 - **Version** `= <upstream>-csillag.<N>` (N = highest existing fork-release
