@@ -78,7 +78,10 @@ git rebase origin/main
 ```
 
 Conflicts to expect (main overrides these files vs upstream):
-- **`AGENTS.md`** — keep OURS: `git checkout --ours AGENTS.md && git add AGENTS.md`
+- **`AGENTS.md`** — keep the FORK's runbook (this file). During a rebase the
+  sides swap: `--ours` is upstream's base, `--theirs` is the fork commit being
+  reapplied. So: `git checkout --theirs AGENTS.md && git add AGENTS.md`
+  (verify with `git show :3:AGENTS.md | head -2` — must be this runbook).
 - **`.github/workflows/_native-build.yml`** — we only ADD a `version` input, a
   `ref` input, and the "Override CLI version" step, and set `ref:` on the
   checkout. Re-apply those additions on top of upstream, then `git add`.
