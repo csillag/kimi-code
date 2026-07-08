@@ -30,7 +30,7 @@ PR-able upstream, each carrying only its own change):
 | `csillag/iframe` | #1387 | Embeddable web UI under a subpath: `vite base:'./'`, static `<base href="/">`, `document.baseURI` server base. |
 | `csillag/web-permission-display-fix` | #1386 | Sync the permission indicator from `/status` in `refreshSessionStatus`. |
 | `csillag/hide-sidebar` | (fork-only) | `?embed=1` query param hard-hides the sidebar + rail for iframe embedding. |
-| `csillag/acp-graded-thinking` | (issue TBD) | ACP `session/set_config_option` accepts + advertises graded reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`) live, not just on/off. Touches `packages/acp-adapter` only. |
+| `csillag/acp-graded-thinking` | #1486 | ACP `session/set_config_option` accepts + advertises graded reasoning effort (`low`/`medium`/`high`/`xhigh`/`max`) live, not just on/off. Touches `packages/acp-adapter` only. |
 
 Keep every feature branch rebased onto the **same** upstream base so they share a
 clean merge-base (the build's octopus merge-base).
